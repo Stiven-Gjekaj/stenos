@@ -1,10 +1,12 @@
 # Installs the stenos executable from the latest GitHub release.
 #
-# Usage:
+# Usage, for the newest stable release:
 #   irm https://raw.githubusercontent.com/Stiven-Gjekaj/stenos/main/scripts/install.ps1 | iex
 #
-# Or, for a specific version:
-#   & ([scriptblock]::Create((irm https://raw.githubusercontent.com/Stiven-Gjekaj/stenos/main/scripts/install.ps1))) -Version v0.1.1.0
+# For the newest pre-release, which is what every alpha is published as, or for
+# one exact version:
+#   & ([scriptblock]::Create((irm https://raw.githubusercontent.com/Stiven-Gjekaj/stenos/main/scripts/install.ps1))) -Pre
+#   & ([scriptblock]::Create((irm https://raw.githubusercontent.com/Stiven-Gjekaj/stenos/main/scripts/install.ps1))) -Version v0.1.3.19
 #
 # It refuses rather than guesses: an unsupported architecture, a missing
 # checksum, or a checksum that does not match all stop the script. A wrong
@@ -13,6 +15,7 @@
 [CmdletBinding()]
 param(
     [string]$Version = "",
+    [switch]$Pre,
     [string]$InstallDir = "$env:LOCALAPPDATA\Programs\stenos"
 )
 
@@ -42,10 +45,30 @@ $target = "windows-x86_64"
 # --- Work out the version ----------------------------------------------------
 
 if (-not $Version) {
-    $latest = Invoke-RestMethod "https://api.github.com/repos/$Repo/releases/latest"
-    $Version = $latest.tag_name
-    if (-not $Version) {
-        Fail "cannot find the latest version. Give one: -Version v0.1.1.0"
+    if ($Pre) {
+        # The full list is ordered newest first and omits drafts, so its first
+        # entry is the newest release of any kind.
+        $releases = Invoke-RestMethod "https://api.github.com/repos/$Repo/releases"
+        $Version = ($releases | Select-Object -First 1).tag_name
+        if (-not $Version) {
+            Fail "no releases have been published yet."
+        }
+    }
+    else {
+        # releases/latest is defined as the newest release that is neither a
+        # draft nor a pre-release, which is exactly the stable one wanted here.
+        # It answers 404 when there is no stable release, which is not an error
+        # worth a stack trace when the advice is simply to pass -Pre.
+        try {
+            $latest = Invoke-RestMethod "https://api.github.com/repos/$Repo/releases/latest"
+            $Version = $latest.tag_name
+        }
+        catch {
+            $Version = ""
+        }
+        if (-not $Version) {
+            Fail "no stable release yet. Every release so far is a pre-release, so run this again with -Pre to install the newest of those."
+        }
     }
 }
 

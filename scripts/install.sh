@@ -4,8 +4,12 @@
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/Stiven-Gjekaj/stenos/main/scripts/install.sh | sh
 #
-# Or, for a specific version:
-#   ... | sh -s -- v0.1.1.0
+# The newest stable release by default. For the newest pre-release, which is
+# what every alpha is published as:
+#   ... | sh -s -- --pre
+#
+# Or, for one exact version:
+#   ... | sh -s -- v0.1.3.19
 #
 # POSIX sh rather than bash, so it runs on a system where bash is not
 # installed. It refuses rather than guesses: an unknown platform, a missing
@@ -16,11 +20,38 @@ set -eu
 
 REPO="Stiven-Gjekaj/stenos"
 INSTALL_DIR="${STENOS_INSTALL_DIR:-$HOME/.local/bin}"
+RAW_URL="https://raw.githubusercontent.com/$REPO/main/scripts/install.sh"
 
 fail() {
     echo "install.sh: $1" >&2
     exit 1
 }
+
+usage() {
+    cat <<USAGE
+Install the stenos executable from a GitHub release.
+
+  install.sh                the newest stable release
+  install.sh --pre          the newest release including pre-releases
+  install.sh v0.1.3.19      one exact version
+
+Set STENOS_INSTALL_DIR to install somewhere other than \$HOME/.local/bin.
+USAGE
+}
+
+version=""
+allow_pre=0
+for arg in "$@"; do
+    case "$arg" in
+        --pre | --prerelease) allow_pre=1 ;;
+        -h | --help)
+            usage
+            exit 0
+            ;;
+        -*) fail "unknown option '$arg'. Run with --help." ;;
+        *) version="$arg" ;;
+    esac
+done
 
 need() {
     command -v "$1" >/dev/null 2>&1 || fail "this script needs '$1', which is not installed"
@@ -68,12 +99,29 @@ target="${os_part}-${arch_part}"
 
 # --- Work out the version ----------------------------------------------------
 
-version="${1:-}"
-if [ -z "$version" ]; then
-    version=$(fetch "https://api.github.com/repos/$REPO/releases/latest" |
+tag_from_json() {
+    # Split on commas before matching. A release list arrives as one long line,
+    # and the leading .* is greedy, so without the split the pattern would run
+    # past every release and return the tag of the oldest one.
+    tr ',' '\n' |
         sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' |
-        head -1)
-    [ -n "$version" ] || fail "cannot find the latest version. Give one: install.sh v0.1.1.0"
+        head -1
+}
+
+if [ -z "$version" ]; then
+    if [ "$allow_pre" -eq 1 ]; then
+        # The full list is ordered newest first and omits drafts, so its first
+        # tag is the newest release of any kind.
+        version=$(fetch "https://api.github.com/repos/$REPO/releases" | tag_from_json)
+        [ -n "$version" ] || fail "no releases have been published yet."
+    else
+        # releases/latest is defined as the newest release that is neither a
+        # draft nor a pre-release, which is exactly the stable one wanted here.
+        version=$(fetch "https://api.github.com/repos/$REPO/releases/latest" | tag_from_json)
+        [ -n "$version" ] || fail "no stable release yet. Every release so far is a
+pre-release, so install the newest of those with:
+  curl -fsSL $RAW_URL | sh -s -- --pre"
+    fi
 fi
 
 archive="stenos-${target}.zip"
