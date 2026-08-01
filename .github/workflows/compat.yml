@@ -1,0 +1,54 @@
+name: compat
+
+# platforms.yml proves the package installs everywhere. This workflow proves it
+# works everywhere: the full offline pipeline, from sink to transcript file, on
+# each supported operating system. The transcription backend is mocked and the
+# audio is synthetic, so no Discord connection and no model weights are needed.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "43 5 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: compat-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compat:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install voice libraries
+        # py-cord bundles opus binaries for macOS and Windows. On Linux the
+        # library comes from the system, and voice receive fails at runtime
+        # without it.
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libopus0 libsodium23
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Run the compatibility suite
+        run: uv run pytest tests/compat -m compat -v
+
+      - name: Confirm the default suite still passes on this platform
+        run: uv run pytest -q
