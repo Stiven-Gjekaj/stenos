@@ -1,0 +1,87 @@
+name: cleanup
+
+# Removes a release, and optionally its tag, by hand.
+#
+# Deleting a release is not something the GitHub web interface makes reversible,
+# so this asks for the tag twice: once to say what to remove and once to
+# confirm. A dispatch with a mismatched confirmation stops without touching
+# anything.
+#
+# Releases are resolved by identifier rather than by tag, because a draft
+# release has a tag name but no tag behind it, and `gh release delete` cannot
+# find one that way.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag of the release to remove (for example v0.1.1.0)"
+        required: true
+        type: string
+      confirm:
+        description: "Type the same tag again to confirm"
+        required: true
+        type: string
+      delete_tag:
+        description: "Also delete the tag itself"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    name: remove ${{ inputs.tag }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Confirm the target
+        env:
+          TAG: ${{ inputs.tag }}
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          set -euo pipefail
+          if [ "$TAG" != "$CONFIRM" ]; then
+            echo "confirmation '$CONFIRM' does not match tag '$TAG'; nothing was removed" >&2
+            exit 1
+          fi
+
+      - name: Delete the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          # A draft carries a tag name without a tag, so match on tag_name and
+          # delete by id. jq is preinstalled on the runner.
+          ids=$(gh api "repos/${GITHUB_REPOSITORY}/releases" --paginate \
+            --jq ".[] | select(.tag_name == \"${TAG}\") | .id")
+
+          if [ -z "$ids" ]; then
+            echo "no release found for ${TAG}; nothing to delete"
+            exit 0
+          fi
+
+          for id in $ids; do
+            echo "deleting release $id (${TAG})"
+            gh api -X DELETE "repos/${GITHUB_REPOSITORY}/releases/${id}"
+          done
+
+      - name: Delete the tag
+        if: inputs.delete_tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" >/dev/null 2>&1; then
+            gh api -X DELETE "repos/${GITHUB_REPOSITORY}/git/refs/tags/${TAG}"
+            echo "deleted tag ${TAG}"
+          else
+            echo "tag ${TAG} does not exist; nothing to delete"
+          fi
