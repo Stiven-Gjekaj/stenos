@@ -1,12 +1,15 @@
 """Opus availability.
 
-Voice receive does not work without libopus. py-cord bundles binaries for
-macOS and Windows; on Linux the library comes from the system, which is the
-most common platform failure for a voice bot and one that surfaces at runtime
-rather than at import.
+Voice receive does not work without libopus. py-cord bundles a binary for
+Windows only; on Linux and macOS it calls ctypes.util.find_library and so
+depends on the system package. This is the most common platform failure for a
+voice bot, and it surfaces at runtime rather than at import.
 """
 
 from __future__ import annotations
+
+import sys
+from pathlib import Path
 
 import discord
 import pytest
@@ -32,11 +35,26 @@ def test_opus_module_is_importable() -> None:
 def test_opus_loads_after_the_documented_install_steps() -> None:
     if not load_opus():
         pytest.fail(
-            "libopus is not available. On Linux install libopus0 and libsodium23; "
-            "macOS and Windows use the binaries bundled with py-cord."
+            "libopus is not available. On Linux install libopus0 and libsodium23, "
+            "on macOS run brew install opus. Windows uses the binary bundled with "
+            "py-cord and needs nothing further."
         )
 
     assert discord.opus.is_loaded() is True
+
+
+def test_only_windows_receives_a_bundled_binary() -> None:
+    # Records the upstream behaviour the platform prerequisites depend on. If
+    # py-cord starts shipping binaries for other platforms, the documented
+    # install steps can be relaxed.
+    bundled = list((Path(discord.__file__).parent / "bin").glob("*opus*"))
+
+    if sys.platform == "win32":
+        assert bundled, "py-cord should bundle an opus binary for Windows"
+    else:
+        assert all(item.suffix == ".dll" for item in bundled), (
+            "py-cord bundles opus for Windows only; other platforms use the system library"
+        )
 
 
 def test_voice_receive_dependencies_are_importable() -> None:
