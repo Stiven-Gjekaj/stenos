@@ -1,0 +1,219 @@
+"""Tests for merge ordering, rendering, and file output."""
+
+from __future__ import annotations
+
+import json
+from datetime import UTC, datetime
+from pathlib import Path
+
+from stenos.transcribe import TranscribedSegment
+from stenos.transcript import (
+    build_sidecar,
+    merge,
+    render,
+    write_sidecar,
+    write_transcript,
+)
+
+RECORDED_AT = datetime(2026, 8, 1, 16, 14, 43, tzinfo=UTC)
+
+NAMES = {11: "Stiven", 22: "Enxhi"}
+
+
+def result(start: float, user_id: int, text: str, duration: float = 1.0) -> TranscribedSegment:
+    return TranscribedSegment(user_id=user_id, start=start, duration=duration, text=text)
+
+
+def test_interleaved_speakers_sort_by_offset() -> None:
+    results = [
+        result(259.0, 22, "which part broke"),
+        result(252.0, 11, "so about the asset pipeline"),
+    ]
+
+    lines = merge(results, NAMES)
+
+    assert [(line.start, line.speaker) for line in lines] == [
+        (252.0, "Stiven"),
+        (259.0, "Enxhi"),
+    ]
+
+
+def test_rendered_transcript_matches_the_documented_shape() -> None:
+    results = [
+        result(252.0, 11, "so about the asset pipeline"),
+        result(259.0, 22, "which part broke"),
+    ]
+
+    body = render(merge(results, NAMES))
+
+    assert body == (
+        "[00:04:12] Stiven: so about the asset pipeline\n[00:04:19] Enxhi: which part broke\n"
+    )
+
+
+def test_many_speakers_interleave_correctly() -> None:
+    results = [
+        result(30.0, 22, "third"),
+        result(10.0, 11, "first"),
+        result(40.0, 11, "fourth"),
+        result(20.0, 33, "second"),
+    ]
+
+    lines = merge(results, {**NAMES, 33: "Ana"})
+
+    assert [line.text for line in lines] == ["first", "second", "third", "fourth"]
+
+
+def test_simultaneous_starts_are_ordered_deterministically() -> None:
+    results = [result(5.0, 22, "b"), result(5.0, 11, "a")]
+
+    first = merge(results, NAMES)
+    second = merge(list(reversed(results)), NAMES)
+
+    assert [line.user_id for line in first] == [11, 22]
+    assert first == second
+
+
+def test_empty_results_are_dropped() -> None:
+    results = [result(1.0, 11, "kept"), result(2.0, 22, ""), result(3.0, 11, "   ")]
+
+    lines = merge(results, NAMES)
+
+    assert [line.text for line in lines] == ["kept"]
+
+
+def test_text_is_stripped() -> None:
+    lines = merge([result(1.0, 11, "  padded  ")], NAMES)
+
+    assert lines[0].text == "padded"
+
+
+def test_unknown_speakers_are_labelled_with_their_identifier() -> None:
+    lines = merge([result(1.0, 99, "who said this")], NAMES)
+
+    assert lines[0].speaker == "Unknown (99)"
+
+
+def test_names_captured_at_record_time_are_used() -> None:
+    # A participant who disconnected before the call ended is still resolvable
+    # because the cache was populated while recording.
+    departed = {**NAMES, 44: "Departed"}
+
+    lines = merge([result(1.0, 44, "left early")], departed)
+
+    assert lines[0].speaker == "Departed"
+
+
+def test_no_results_render_as_an_empty_transcript() -> None:
+    assert render(merge([], NAMES)) == ""
+
+
+def test_transcript_is_written_as_utf8(tmp_path: Path) -> None:
+    names = {11: "Enxhi", 22: "会議", 33: "Zoë 🎧"}
+    results = [
+        result(1.0, 11, "ç'kemi, si po shkon"),
+        result(2.0, 22, "こんにちは"),
+        result(3.0, 33, "emoji in the name"),
+    ]
+
+    path = write_transcript(tmp_path / "out.txt", merge(results, names))
+
+    assert path.read_text(encoding="utf-8").startswith("[00:00:01] Enxhi: ç'kemi")
+
+
+def test_written_bytes_round_trip_exactly(tmp_path: Path) -> None:
+    names = {11: "Zoë"}
+    lines = merge([result(1.0, 11, "ë ç 会議 🎧")], names)
+
+    path = write_transcript(tmp_path / "out.txt", lines)
+
+    assert path.read_bytes() == render(lines).encode("utf-8")
+
+
+def test_line_endings_are_line_feeds_only(tmp_path: Path) -> None:
+    lines = merge([result(1.0, 11, "one"), result(2.0, 22, "two")], NAMES)
+
+    path = write_transcript(tmp_path / "out.txt", lines)
+    raw = path.read_bytes()
+
+    assert b"\r\n" not in raw
+    assert raw.count(b"\n") == 2
+
+
+def test_output_directory_is_created(tmp_path: Path) -> None:
+    target = tmp_path / "nested" / "deeper" / "out.txt"
+
+    write_transcript(target, merge([result(1.0, 11, "text")], NAMES))
+
+    assert target.exists()
+
+
+def test_sidecar_records_every_segment_including_empty_ones() -> None:
+    results = [result(1.0, 11, "spoken"), result(2.0, 22, "")]
+
+    payload = build_sidecar(
+        results,
+        NAMES,
+        channel="general",
+        recorded_at=RECORDED_AT,
+        duration=12.5,
+        backend="mock",
+        model="small",
+    )
+
+    assert len(payload["segments"]) == 2
+    assert payload["segments"][1]["text"] == ""
+
+
+def test_sidecar_carries_run_metadata() -> None:
+    payload = build_sidecar(
+        [result(1.0, 11, "text")],
+        NAMES,
+        channel="general",
+        recorded_at=RECORDED_AT,
+        duration=12.5,
+        backend="mlx",
+        model="small",
+    )
+
+    assert payload["channel"] == "general"
+    assert payload["recorded_at"] == "2026-08-01T16:14:43+00:00"
+    assert payload["duration"] == 12.5
+    assert payload["backend"] == "mlx"
+    assert payload["model"] == "small"
+    assert payload["speakers"] == {"11": "Stiven", "22": "Enxhi"}
+
+
+def test_sidecar_segments_are_ordered_by_offset() -> None:
+    payload = build_sidecar(
+        [result(9.0, 22, "later"), result(1.0, 11, "earlier")],
+        NAMES,
+        channel="general",
+        recorded_at=RECORDED_AT,
+        duration=10.0,
+        backend="mock",
+        model="small",
+    )
+
+    assert [segment["start"] for segment in payload["segments"]] == [1.0, 9.0]
+
+
+def test_sidecar_round_trips_non_ascii_without_escaping(tmp_path: Path) -> None:
+    names = {11: "Zoë 🎧"}
+    payload = build_sidecar(
+        [result(1.0, 11, "ç'kemi 会議")],
+        names,
+        channel="bisedë",
+        recorded_at=RECORDED_AT,
+        duration=2.0,
+        backend="mock",
+        model="small",
+    )
+
+    path = write_sidecar(tmp_path / "out.json", payload)
+    raw = path.read_bytes()
+
+    assert "ç'kemi 会議".encode() in raw
+    assert b"\\u" not in raw
+    assert b"\r\n" not in raw
+    assert json.loads(path.read_text(encoding="utf-8")) == payload
