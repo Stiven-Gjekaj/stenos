@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import logging
+import platform
 import time
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -13,8 +15,9 @@ from typing import Any
 
 import discord
 
+from . import __version__
 from .audio import prepare_segments
-from .config import Config
+from .config import Config, ConfigError, load_config, resolve_backend
 from .sink import TimestampedSink
 from .transcribe import (
     ProgressCallback,
@@ -35,9 +38,12 @@ __all__ = [
     "RecordingResult",
     "RecordingSession",
     "StenosBot",
+    "build_bot",
+    "describe_environment",
     "describe_result",
     "discard_audio",
     "format_duration",
+    "main",
     "register_commands",
     "run_pipeline",
 ]
@@ -315,3 +321,70 @@ def _attachment_for(result: RecordingResult, ctx: Any) -> Any:
     if result.transcript_path.stat().st_size >= limit:
         return None
     return discord.File(result.transcript_path)
+
+
+def build_bot(config: Config) -> StenosBot:
+    """Construct a bot with the record commands registered."""
+    bot = StenosBot(config)
+    guild_ids = [config.guild_id] if config.guild_id is not None else None
+    register_commands(bot, guild_ids)
+    return bot
+
+
+def describe_environment(config: Config) -> str:
+    """Report the resolved runtime configuration without connecting to Discord."""
+    resolved = resolve_backend(config.whisper_backend)
+    lines = [
+        f"stenos {__version__}",
+        f"python           {platform.python_version()} on {platform.system()} {platform.machine()}",
+        f"backend          {config.whisper_backend} resolves to {resolved}",
+        f"model            {config.whisper_model}",
+        f"language         {config.language or 'auto'}",
+        f"segment gap      {config.segment_gap}s",
+        f"minimum segment  {config.min_segment}s",
+        f"output directory {config.output_dir}",
+        f"keep audio       {config.keep_audio}",
+        f"opus loaded      {discord.opus.is_loaded()}",
+    ]
+    return "\n".join(lines)
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """Entry point for the stenos command."""
+    parser = argparse.ArgumentParser(
+        prog="stenos",
+        description=(
+            "Record each participant of a Discord voice channel separately and "
+            "produce a timestamped, speaker attributed transcript locally."
+        ),
+    )
+    parser.add_argument("--version", action="version", version=f"stenos {__version__}")
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="report the resolved configuration and exit without connecting",
+    )
+    parser.add_argument(
+        "--log-level",
+        default="INFO",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        help="logging verbosity (default: INFO)",
+    )
+    args = parser.parse_args(argv)
+
+    logging.basicConfig(
+        level=args.log_level,
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
+
+    try:
+        config = load_config()
+    except ConfigError as error:
+        parser.exit(2, f"configuration error: {error}\n")
+
+    if args.check:
+        print(describe_environment(config))
+        return 0
+
+    build_bot(config).run(config.discord_token)
+    return 0

@@ -1,6 +1,6 @@
 [project]
 name = "stenos"
-version = "0.0.1.24"
+version = "0.0.1.25"
 description = "Discord voice recorder producing timestamped, speaker-attributed transcripts with local inference"
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
@@ -22,6 +22,9 @@ dependencies = [
     "numpy>=1.26",
     "python-dotenv>=1.0",
 ]
+
+[project.scripts]
+stenos = "stenos.bot:main"
 
 [project.optional-dependencies]
 mlx = ["mlx-whisper>=0.4"]
