@@ -65,7 +65,10 @@ def sanitize_filename(name: str, *, fallback: str = "channel", max_length: int =
     if not cleaned:
         return fallback
     if cleaned.split(".")[0].upper() in _RESERVED_STEMS:
-        return f"{cleaned}-{fallback}"
+        # Prefixed rather than suffixed: Windows resolves a reserved device
+        # name from the component before the first dot, so appending to
+        # "NUL.txt" would leave it reserved.
+        return f"{fallback}-{cleaned}"
     return cleaned
 
 
