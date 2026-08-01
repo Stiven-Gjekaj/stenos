@@ -139,9 +139,14 @@ jobs:
             cp dist/stenos "package/$name/"
             chmod +x "package/$name/stenos"
           fi
-          cp README.md LICENSE "package/$name/"
-          cp .env.example "package/$name/"
-          (cd package && zip -qr "$name.zip" "$name")
+          cp README.md LICENSE .env.example "package/$name/"
+          # Git Bash on the Windows runner has no zip. 7-Zip is preinstalled
+          # there, and produces the same archive.
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            (cd package && 7z a -tzip "$name.zip" "$name" > /dev/null)
+          else
+            (cd package && zip -qr "$name.zip" "$name")
+          fi
           ls -la package
 
       # The executable is checked here rather than only at the end, so a broken
