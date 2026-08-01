@@ -1,6 +1,6 @@
 [project]
 name = "stenos"
-version = "0.1.1.6"
+version = "0.1.1.7"
 description = "Discord voice recorder producing timestamped, speaker-attributed transcripts with local inference"
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
@@ -42,6 +42,9 @@ dev = [
     "ruff>=0.8",
     "mypy>=1.13",
 ]
+# Kept out of dev so an ordinary checkout does not pull a freezer it will
+# never run. Only the release workflow installs this group.
+freeze = ["pyinstaller>=6.11"]
 
 [build-system]
 requires = ["hatchling"]
