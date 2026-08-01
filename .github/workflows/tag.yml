@@ -1,0 +1,84 @@
+name: tag
+
+# Creates a release tag by hand. Tags are only valid on a major, beta, or
+# alpha bump, and any such bump zeroes every component to its right, so a
+# taggable version always ends in zero.
+#
+# The tag is pushed with the default GITHUB_TOKEN, which does not start
+# another workflow. release.yml is therefore called directly rather than
+# waiting for the tag event that would never arrive.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to tag, as X.N.V.M (for example 0.1.0.0)"
+        required: true
+        type: string
+      force:
+        description: "Allow tagging a commit counter bump"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    name: create tag
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.check.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Validate the version and create the tag
+        id: check
+        env:
+          VERSION: ${{ inputs.version }}
+          FORCE: ${{ inputs.force }}
+        run: |
+          set -euo pipefail
+
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "version must be X.N.V.M, got '$VERSION'" >&2
+            exit 1
+          fi
+
+          packaged=$(grep -m1 '^version = ' pyproject.toml | cut -d'"' -f2)
+          if [ "$VERSION" != "$packaged" ]; then
+            echo "version $VERSION does not match pyproject.toml, which reports $packaged" >&2
+            echo "bump the version in the commit that describes the change, then tag it" >&2
+            exit 1
+          fi
+
+          counter="${VERSION##*.}"
+          if [ "$counter" != "0" ] && [ "$FORCE" != "true" ]; then
+            echo "refusing to tag $VERSION: only major, beta, and alpha bumps are tagged" >&2
+            echo "a qualifying bump zeroes the commit counter; rerun with force to override" >&2
+            exit 1
+          fi
+
+          tag="v$VERSION"
+          if git rev-parse "$tag" >/dev/null 2>&1; then
+            echo "tag $tag already exists" >&2
+            exit 1
+          fi
+
+          git config user.name "Stiven-Gjekaj"
+          git config user.email "stivenagostingjekaj@gmail.com"
+          git tag -a "$tag" -m "stenos $VERSION"
+          git push origin "$tag"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+  release:
+    name: release
+    needs: tag
+    uses: ./.github/workflows/release.yml
+    permissions:
+      contents: write
+    with:
+      tag: ${{ needs.tag.outputs.tag }}
