@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import time
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
@@ -9,10 +11,17 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import discord
+
 from .audio import prepare_segments
 from .config import Config
 from .sink import TimestampedSink
-from .transcribe import ProgressCallback, TranscriptionBackend, transcribe_segments
+from .transcribe import (
+    ProgressCallback,
+    TranscriptionBackend,
+    load_backend,
+    transcribe_segments,
+)
 from .transcript import (
     TranscriptLine,
     build_sidecar,
@@ -25,9 +34,11 @@ from .transcript import (
 __all__ = [
     "RecordingResult",
     "RecordingSession",
+    "StenosBot",
     "describe_result",
     "discard_audio",
     "format_duration",
+    "register_commands",
     "run_pipeline",
 ]
 
@@ -169,3 +180,138 @@ def describe_result(result: RecordingResult) -> str:
         f"Recording stopped. Transcribed {result.segment_count} segments "
         f"from {result.speakers} speakers over {format_duration(result.duration)}."
     )
+
+
+log = logging.getLogger("stenos")
+
+
+class StenosBot(discord.Bot):  # type: ignore[misc]
+    """Discord client owning at most one recording per guild."""
+
+    def __init__(self, config: Config, **options: Any) -> None:
+        intents = discord.Intents.default()
+        intents.voice_states = True
+        super().__init__(intents=intents, **options)
+        self.config = config
+        self.sessions: dict[int, RecordingSession] = {}
+
+    async def on_ready(self) -> None:
+        log.info("Connected as %s", self.user)
+
+    async def on_voice_state_update(self, member: Any, before: Any, after: Any) -> None:
+        """Cache the display name of anyone who joins a channel being recorded."""
+        session = self.sessions.get(getattr(member.guild, "id", 0))
+        if session is None:
+            return
+        if getattr(after.channel, "id", None) == session.channel_id:
+            session.remember(member)
+
+
+def register_commands(bot: StenosBot, guild_ids: list[int] | None = None) -> Any:
+    """Attach the record command group to a bot instance."""
+    group = bot.create_group(
+        "record",
+        "Record the voice channel and produce a speaker attributed transcript",
+        guild_ids=guild_ids,
+    )
+
+    @group.command(name="start", description="Join your voice channel and begin recording")
+    async def record_start(ctx: discord.ApplicationContext) -> None:
+        guild_id = ctx.guild_id
+        if guild_id is None:
+            await ctx.respond("This command works only inside a server.", ephemeral=True)
+            return
+
+        voice_state = getattr(ctx.author, "voice", None)
+        channel = getattr(voice_state, "channel", None)
+        if channel is None:
+            await ctx.respond("Join a voice channel first.", ephemeral=True)
+            return
+
+        if guild_id in bot.sessions:
+            await ctx.respond("A recording is already in progress.", ephemeral=True)
+            return
+
+        voice_client = await channel.connect()
+        sink = TimestampedSink(segment_gap=bot.config.segment_gap)
+        session = RecordingSession(
+            guild_id=int(guild_id),
+            channel_id=int(channel.id),
+            channel_name=str(channel.name),
+            text_channel=ctx.channel,
+            voice_client=voice_client,
+            sink=sink,
+        )
+        session.remember_all(getattr(channel, "members", []))
+        bot.sessions[session.guild_id] = session
+
+        voice_client.start_recording(sink, _on_recording_finished)
+
+        # Announced unconditionally and non-ephemerally. Recording law varies
+        # by jurisdiction and silent recording is never the intent.
+        await ctx.respond(
+            f"Recording {channel.name}. Every participant is recorded separately "
+            f"and transcribed locally when the recording stops."
+        )
+
+    @group.command(name="stop", description="Stop recording and post the transcript")
+    async def record_stop(ctx: discord.ApplicationContext) -> None:
+        session = bot.sessions.pop(getattr(ctx, "guild_id", 0), None)
+        if session is None:
+            await ctx.respond("No recording is in progress.", ephemeral=True)
+            return
+
+        await ctx.defer()
+        session.voice_client.stop_recording()
+        await session.voice_client.disconnect()
+
+        backend = await asyncio.to_thread(
+            load_backend,
+            bot.config.whisper_backend,
+            bot.config.whisper_model,
+        )
+        result = await asyncio.to_thread(
+            run_pipeline,
+            session.sink,
+            session.names,
+            channel_name=session.channel_name,
+            config=bot.config,
+            backend=backend,
+            recorded_at=session.started_at,
+        )
+
+        await ctx.followup.send(
+            describe_result(result),
+            file=_attachment_for(result, ctx),
+        )
+
+    @group.command(name="status", description="Report the state of the current recording")
+    async def record_status(ctx: discord.ApplicationContext) -> None:
+        session = bot.sessions.get(getattr(ctx, "guild_id", 0))
+        if session is None:
+            await ctx.respond("No recording is in progress.", ephemeral=True)
+            return
+
+        await ctx.respond(
+            f"Recording {session.channel_name} for {format_duration(session.elapsed())}. "
+            f"{len(session.sink.user_ids)} participants have spoken so far.",
+            ephemeral=True,
+        )
+
+    return group
+
+
+async def _on_recording_finished(exception: BaseException | None = None) -> None:
+    """Surface any error raised by the receive loop."""
+    if exception is not None:
+        log.error("Recording ended with an error: %s", exception)
+
+
+def _attachment_for(result: RecordingResult, ctx: Any) -> Any:
+    """Attach the transcript when it fits inside the guild's upload limit."""
+    if result.packet_count == 0 or not result.lines:
+        return None
+    limit = getattr(getattr(ctx, "guild", None), "filesize_limit", 0) or 0
+    if result.transcript_path.stat().st_size >= limit:
+        return None
+    return discord.File(result.transcript_path)
