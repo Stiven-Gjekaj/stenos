@@ -10,7 +10,7 @@ import pytest
 from stenos import bot as bot_module
 from stenos.bot import build_bot
 from stenos.config import Config
-from stenos.transcribe import MockBackend
+from stenos.transcribe import BackendUnavailableError, MockBackend
 
 
 class FakeMember:
@@ -265,3 +265,50 @@ async def test_voice_state_updates_for_other_channels_are_ignored(tmp_path: Path
     await bot.on_voice_state_update(stranger, FakeVoiceState(None), FakeVoiceState(other))
 
     assert 55 not in bot.sessions[1].names
+
+
+async def test_stop_reports_a_missing_backend_instead_of_hanging(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The caller is waiting on a deferred response. An unanswered command is
+    # indistinguishable from a transcription that is merely slow.
+    def unavailable(*args: object, **kwargs: object) -> None:
+        raise BackendUnavailableError("Install it with: uv sync --extra mlx.")
+
+    monkeypatch.setattr(bot_module, "load_backend", unavailable)
+    bot = make_bot(tmp_path)
+    channel = FakeVoiceChannel(2, "general", [])
+    author = FakeMember(11, "Stiven", channel=channel)
+    channel.members = [author]
+    await command(bot, "start")(FakeContext(1, author))
+
+    stop_ctx = FakeContext(1, author)
+    await command(bot, "stop")(stop_ctx)
+
+    message, attachment = stop_ctx.followup.sent[0]
+    assert "backend is unavailable" in message
+    assert "uv sync --extra mlx" in message
+    assert attachment is None
+    assert bot.sessions == {}
+
+
+async def test_stop_reports_an_unexpected_transcription_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def explode(*args: object, **kwargs: object) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(bot_module, "load_backend", lambda *a, **k: MockBackend())
+    monkeypatch.setattr(bot_module, "run_pipeline", explode)
+    bot = make_bot(tmp_path)
+    channel = FakeVoiceChannel(2, "general", [])
+    author = FakeMember(11, "Stiven", channel=channel)
+    channel.members = [author]
+    await command(bot, "start")(FakeContext(1, author))
+
+    stop_ctx = FakeContext(1, author)
+    await command(bot, "stop")(stop_ctx)
+
+    message, _attachment = stop_ctx.followup.sent[0]
+    assert "transcription failed" in message
+    assert "OSError: disk full" in message

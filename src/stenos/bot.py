@@ -20,6 +20,7 @@ from .audio import prepare_segments
 from .config import Config, ConfigError, load_config, resolve_backend
 from .sink import TimestampedSink
 from .transcribe import (
+    BackendUnavailableError,
     ProgressCallback,
     TranscriptionBackend,
     load_backend,
@@ -269,22 +270,41 @@ def register_commands(bot: StenosBot, guild_ids: list[int] | None = None) -> Any
 
         await ctx.defer()
         session.voice_client.stop_recording()
+        session.sink.cleanup()
         await session.voice_client.disconnect()
 
-        backend = await asyncio.to_thread(
-            load_backend,
-            bot.config.whisper_backend,
-            bot.config.whisper_model,
-        )
-        result = await asyncio.to_thread(
-            run_pipeline,
-            session.sink,
-            session.names,
-            channel_name=session.channel_name,
-            config=bot.config,
-            backend=backend,
-            recorded_at=session.started_at,
-        )
+        # Failures are reported back to the channel rather than left to the
+        # library's exception logger. The caller is waiting on a deferred
+        # response, and an unanswered command is indistinguishable from a
+        # transcription that is merely slow.
+        try:
+            backend = await asyncio.to_thread(
+                load_backend,
+                bot.config.whisper_backend,
+                bot.config.whisper_model,
+            )
+            result = await asyncio.to_thread(
+                run_pipeline,
+                session.sink,
+                session.names,
+                channel_name=session.channel_name,
+                config=bot.config,
+                backend=backend,
+                recorded_at=session.started_at,
+            )
+        except BackendUnavailableError as error:
+            log.error("Transcription backend unavailable: %s", error)
+            await ctx.followup.send(
+                f"Recording stopped, but the transcription backend is unavailable, "
+                f"so the audio could not be transcribed. {error}"
+            )
+            return
+        except Exception as error:
+            log.exception("Transcription failed")
+            await ctx.followup.send(
+                f"Recording stopped, but transcription failed: {error.__class__.__name__}: {error}"
+            )
+            return
 
         await ctx.followup.send(
             describe_result(result),
