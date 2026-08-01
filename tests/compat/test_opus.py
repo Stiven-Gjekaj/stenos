@@ -14,7 +14,12 @@ from pathlib import Path
 import discord
 import pytest
 
-from stenos.sink import _try_load, ensure_opus, opus_library_candidates
+from stenos.sink import (
+    _try_load,
+    bundle_directory,
+    ensure_opus,
+    opus_library_candidates,
+)
 
 
 def load_opus() -> bool:
@@ -82,3 +87,24 @@ def test_loading_reports_failure_rather_than_raising() -> None:
 
 def test_an_unusable_candidate_is_rejected_without_raising() -> None:
     assert _try_load("/nonexistent/libopus.dylib") is False
+
+
+def test_no_bundle_directory_outside_a_frozen_build() -> None:
+    # Running from an installation, not an executable, so there is no payload
+    # directory to search.
+    assert bundle_directory() is None
+
+
+def test_a_frozen_build_searches_its_own_payload_first(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "_MEIPASS", str(tmp_path), raising=False)
+
+    candidates = opus_library_candidates()
+
+    assert bundle_directory() == tmp_path
+    assert candidates, "a frozen build must offer at least one candidate"
+    assert str(tmp_path) in candidates[0], "the bundled copy must be tried before the system"
+    # Windows ships its binary under discord/bin, so that path is searched too.
+    assert any(str(tmp_path / "discord" / "bin") in candidate for candidate in candidates)

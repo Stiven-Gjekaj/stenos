@@ -20,6 +20,7 @@ from stenos.transcribe import (
     MLXBackend,
     MockBackend,
     TranscribedSegment,
+    backend_status,
     load_backend,
     mlx_repo_for,
     transcribe_segments,
@@ -247,3 +248,44 @@ def test_mock_backend_falls_back_to_its_default_text() -> None:
     results = transcribe_segments([segment_of(1.0), segment_of(1.0)], backend)
 
     assert [result.text for result in results] == ["only one", "filler"]
+
+
+def test_backend_status_reports_a_missing_dependency() -> None:
+    resolved, available, detail = backend_status("auto", system="Linux", machine="x86_64")
+
+    assert resolved == "faster-whisper"
+    assert available is False
+    assert "uv sync --extra cuda" in detail
+
+
+def test_backend_status_reports_an_importable_dependency(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = ModuleType("mlx_whisper")
+    module.transcribe = lambda audio, **options: {"text": ""}  # type: ignore[attr-defined]
+    install_fake_module(monkeypatch, "mlx_whisper", module)
+
+    resolved, available, detail = backend_status("auto", system="Darwin", machine="arm64")
+
+    assert resolved == "mlx"
+    assert available is True
+    assert detail == "installed"
+
+
+def test_backend_status_never_constructs_a_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Constructing one would download weights, which a status probe must not do.
+    constructed: list[str] = []
+
+    class ExplodingModel:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            constructed.append("built")
+            raise AssertionError("backend_status must not construct a model")
+
+    module = ModuleType("faster_whisper")
+    module.WhisperModel = ExplodingModel  # type: ignore[attr-defined]
+    install_fake_module(monkeypatch, "faster_whisper", module)
+
+    _resolved, available, _detail = backend_status("auto", system="Linux", machine="x86_64")
+
+    assert available is True
+    assert constructed == []
