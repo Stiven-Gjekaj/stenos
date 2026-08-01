@@ -125,6 +125,21 @@ On Windows, in PowerShell:
 irm https://raw.githubusercontent.com/Stiven-Gjekaj/stenos/main/scripts/install.ps1 | iex
 ```
 
+Both install the newest **stable** release. Every release so far is an alpha,
+published as a pre-release, so until the first beta those commands will report
+that there is no stable release and tell you to ask for a pre-release instead:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Stiven-Gjekaj/stenos/main/scripts/install.sh | sh -s -- --pre
+```
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/Stiven-Gjekaj/stenos/main/scripts/install.ps1))) -Pre
+```
+
+Pass a version instead of `--pre` to pin one exactly, and run `install.sh
+--help` for the full set of options.
+
 Prebuilt executables cover Linux on x86-64 and arm64, macOS on Apple Silicon,
 and Windows on x86-64. Each carries its own copy of libopus and the
 faster-whisper backend. Model weights are downloaded on first use and cached.
