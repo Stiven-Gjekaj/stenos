@@ -104,6 +104,7 @@ Set `DISCORD_TOKEN`. Setting `GUILD_ID` registers the slash commands to one serv
 | `SEGMENT_GAP` | `0.4` | Seconds of silence that close a segment. |
 | `MIN_SEGMENT` | `0.3` | Segments shorter than this are discarded. |
 | `KEEP_AUDIO` | `false` | Retain buffered audio after transcription. |
+| `OPUS_LIBRARY_PATH` | unset | Full path to libopus, for installations the standard search does not find. |
 
 ### 4. First run
 
