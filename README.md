@@ -40,6 +40,8 @@ Discord clients transmit only while someone is speaking, so the gaps between pac
 
 Python 3.11, 3.12, and 3.13 are supported.
 
+macOS on x86_64 is supported but is not verified by continuous integration, because GitHub no longer provides hosted runners for that architecture. The wheel is architecture independent and `faster-whisper` publishes x86_64 macOS builds, so the capability stands; only the automated check is absent.
+
 Voice receive requires libopus. py-cord bundles a binary for Windows only; on macOS and Linux it resolves the library through `ctypes.util.find_library`, so the system package is required on both.
 
 That search does not cover the Homebrew prefix on Apple Silicon, so Stenos looks in `/opt/homebrew/lib` and `/usr/local/lib` itself and `brew install opus` is sufficient. If your library lives somewhere else, set `OPUS_LIBRARY_PATH` to its full path. A missing libopus fails at runtime rather than at import, which is why `stenos --check` reports whether it loaded.
@@ -208,7 +210,7 @@ Neither transcription backend is installed by `uv sync`. Tests mock the backend 
 | Workflow | Trigger | Purpose |
 |---|---|---|
 | `ci` | push, pull request | Lint, type check, and test on Python 3.11 to 3.13 with a 70 percent coverage floor. |
-| `platforms` | push to `main`, pull request, weekly | Build the wheel and verify it installs and passes tests on six platform and version combinations. |
+| `platforms` | push to `main`, pull request, weekly | Build the wheel and verify it installs and passes tests on five platform and version combinations. |
 | `compat` | push to `main`, pull request, weekly | Run the offline pipeline on Linux, macOS, and Windows. |
 | `release` | tag matching `v*` | Build distributions and publish a release. |
 | `tag` | manual dispatch | Create a release tag after validating it against `pyproject.toml`. |

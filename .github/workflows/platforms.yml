@@ -35,8 +35,6 @@ jobs:
           # Closest proxy for the primary deployment target.
           - os: macos-latest
             python-version: "3.12"
-          - os: macos-13
-            python-version: "3.12"
           - os: windows-latest
             python-version: "3.12"
     steps:
