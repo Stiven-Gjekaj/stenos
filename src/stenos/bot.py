@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from dataclasses import dataclass
+import time
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from .audio import prepare_segments
 from .config import Config
@@ -20,7 +22,14 @@ from .transcript import (
     write_transcript,
 )
 
-__all__ = ["RecordingResult", "discard_audio", "run_pipeline"]
+__all__ = [
+    "RecordingResult",
+    "RecordingSession",
+    "describe_result",
+    "discard_audio",
+    "format_duration",
+    "run_pipeline",
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,4 +110,62 @@ def run_pipeline(
         duration=duration,
         packet_count=packet_count,
         speakers=len({line.user_id for line in lines}),
+    )
+
+
+@dataclass
+class RecordingSession:
+    """State held for one guild while a recording is in progress."""
+
+    guild_id: int
+    channel_id: int
+    channel_name: str
+    text_channel: Any
+    voice_client: Any
+    sink: TimestampedSink
+    names: dict[int, str] = field(default_factory=dict)
+    started_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    started_monotonic: float = field(default_factory=time.perf_counter)
+
+    def elapsed(self) -> float:
+        """Seconds since recording began."""
+        return time.perf_counter() - self.started_monotonic
+
+    def remember(self, member: Any) -> None:
+        """Cache a participant's display name.
+
+        Names are resolved while recording because a participant may leave
+        before the call ends, after which the guild no longer resolves them.
+        """
+        self.names[int(member.id)] = str(getattr(member, "display_name", member))
+
+    def remember_all(self, members: Iterable[Any]) -> None:
+        for member in members:
+            self.remember(member)
+
+
+def format_duration(seconds: float) -> str:
+    """Render a duration as hours, minutes, and seconds."""
+    total = max(0, int(seconds))
+    hours, remainder = divmod(total, 3600)
+    minutes, secs = divmod(remainder, 60)
+    if hours:
+        return f"{hours}h {minutes}m {secs}s"
+    if minutes:
+        return f"{minutes}m {secs}s"
+    return f"{secs}s"
+
+
+def describe_result(result: RecordingResult) -> str:
+    """Summarise a finished recording for the text channel."""
+    if result.packet_count == 0:
+        return (
+            "Recording stopped, but no audio was received. "
+            "No transcript was produced. This is expected when the voice "
+            "connection carried no decodable audio; see the known limitations "
+            "section of the documentation."
+        )
+    return (
+        f"Recording stopped. Transcribed {result.segment_count} segments "
+        f"from {result.speakers} speakers over {format_duration(result.duration)}."
     )
