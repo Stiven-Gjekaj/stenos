@@ -19,6 +19,7 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import discord.opus
@@ -31,6 +32,7 @@ __all__ = [
     "DISCORD_SAMPLE_WIDTH",
     "Segment",
     "TimestampedSink",
+    "bundle_directory",
     "ensure_opus",
     "opus_library_candidates",
 ]
@@ -49,23 +51,63 @@ DEFAULT_SEGMENT_GAP = 0.4
 OPUS_PATH_VARIABLE = "OPUS_LIBRARY_PATH"
 
 
+#: File names libopus is published under, per platform.
+_OPUS_FILE_NAMES = {
+    "darwin": ("libopus.0.dylib", "libopus.dylib"),
+    "win32": ("libopus-0.x64.dll", "libopus-0.x86.dll", "opus.dll"),
+    "linux": ("libopus.so.0", "libopus.so"),
+}
+
+
+def bundle_directory() -> Path | None:
+    """Directory holding files bundled into a frozen executable, if frozen.
+
+    A one file build unpacks its payload to a temporary directory recorded in
+    sys._MEIPASS. Returns None when running from a normal installation.
+    """
+    if not getattr(sys, "frozen", False):
+        return None
+    base = getattr(sys, "_MEIPASS", None)
+    return Path(base) if base else None
+
+
+def _platform_key() -> str:
+    if sys.platform == "darwin":
+        return "darwin"
+    if sys.platform.startswith("win"):
+        return "win32"
+    return "linux"
+
+
 def opus_library_candidates() -> list[str]:
     """Locations to try when the default library search does not find libopus.
 
     py-cord resolves libopus through ctypes.util.find_library on every platform
     except Windows. On Apple Silicon that search does not cover the Homebrew
-    prefix, so installing the package is not by itself enough to load it.
+    prefix, so installing the package is not by itself enough to load it, and a
+    frozen executable carries its own copy that no system search would find.
     """
+    names = _OPUS_FILE_NAMES[_platform_key()]
+    candidates: list[str] = []
+
+    # A bundled copy comes first: a standalone executable must not depend on
+    # the host having libopus installed.
+    bundle = bundle_directory()
+    if bundle is not None:
+        candidates.extend(str(bundle / name) for name in names)
+        candidates.extend(str(bundle / "discord" / "bin" / name) for name in names)
+
     if sys.platform == "darwin":
-        return [
+        candidates += [
             "/opt/homebrew/lib/libopus.0.dylib",
             "/opt/homebrew/lib/libopus.dylib",
             "/usr/local/lib/libopus.0.dylib",
             "/usr/local/lib/libopus.dylib",
         ]
-    if sys.platform.startswith("linux"):
-        return ["libopus.so.0", "libopus.so"]
-    return []
+    elif sys.platform.startswith("linux"):
+        candidates += list(names)
+
+    return candidates
 
 
 def _try_load(candidate: str) -> bool:
