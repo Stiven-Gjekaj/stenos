@@ -36,6 +36,7 @@ from .transcript import (
     write_sidecar,
     write_transcript,
 )
+from .upstream import apply_receive_repair, receive_repair_state
 from .voice import dave_state, dave_support
 
 __all__ = [
@@ -396,6 +397,7 @@ def describe_environment(config: Config) -> str:
         f"keep audio       {config.keep_audio}",
         f"opus loaded      {ensure_opus()}",
         f"encryption       {dave_support().summary}",
+        f"receive repair   {receive_repair_state().summary}",
     ]
     return "\n".join(lines)
 
@@ -444,6 +446,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             "or set %s to its path.",
             OPUS_PATH_VARIABLE,
         )
+
+    # Before connecting. py-cord 2.8.1 discards received audio on a call that
+    # carries no encryption, which would otherwise produce a recording that
+    # captured nothing. Applied only when that is what the installed version
+    # actually does.
+    apply_receive_repair()
 
     build_bot(config).run(config.discord_token)
     return 0

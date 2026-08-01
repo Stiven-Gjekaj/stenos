@@ -129,6 +129,9 @@ def test_environment_report_covers_the_resolved_runtime(tmp_path: Path) -> None:
     assert "opus loaded" in report
     assert "small" in report
     assert str(tmp_path) in report
+    # Both libraries whose absence only shows up as audio that never arrives.
+    assert "encryption" in report
+    assert "receive repair" in report
 
 
 def record_group(bot: Any) -> Any:
