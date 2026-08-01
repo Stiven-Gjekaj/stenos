@@ -164,7 +164,7 @@ actually be imported, without connecting to Discord.
 | Command | Does |
 | --- | --- |
 | `/record start` | Joins your voice channel, begins recording, and announces it in the text channel |
-| `/record status` | Reports elapsed time and how many participants have spoken |
+| `/record status` | Reports elapsed time, how many participants have spoken, and the encryption state while no audio has arrived |
 | `/record stop` | Stops, transcribes, and posts the transcript with a segment and speaker count |
 
 Transcripts are written to `transcripts/stenos-<channel>-<timestamp>.txt`, and
@@ -289,17 +289,24 @@ quickly for conversational speech.
 
 ## Known limitations
 
-**Voice receive under Discord end-to-end encryption.** Discord began enforcing
-DAVE, its end-to-end encryption protocol for audio and video, on non-Stage voice
-calls on 2 March 2026. py-cord added DAVE support in 2.8.0 scoped to voice
-sending, and its documentation notes that recording may not work as expected
-under the protocol. Receive-side support is upstream work that Stenos cannot
-substitute for.
+**Voice receive under Discord end-to-end encryption.** Discord enforces DAVE,
+its end-to-end encryption protocol for audio and video, on non-Stage voice calls
+as of 2 March 2026. py-cord 2.8.1 decrypts received audio through it, and the
+required library, `davey`, is a dependency of `py-cord[voice]` and is carried
+inside the standalone executables. Recording an encrypted call is therefore
+supported.
 
-Everything from the sink onward is unaffected and fully exercised offline by the
-test suite, so Stenos will work without code changes once py-cord lands
-receive-side DAVE. In the meantime, if a recording produces no packets,
-`/record stop` reports that explicitly rather than posting an empty transcript.
+What is not reported by the library is failure. Audio is yielded only once a DAVE
+session exists and its handshake has completed; until then every packet is
+discarded, and a packet that cannot be decrypted afterwards is replaced with an
+opus silence frame. Both are logged below the default level, so the visible
+result is a recording of the right length holding nothing, which is
+indistinguishable from a call in which nobody spoke.
+
+Stenos separates the two rather than writing out an empty transcript. `--check`
+reports whether the encryption library is present, `/record status` reports the
+negotiated session state while nothing has arrived yet, and `/record stop`
+explains which of the two happened instead of posting a transcript with no lines.
 
 **No live transcription.** Transcription is deliberately post-call. Running
 inference during a call on a fanless machine causes thermal throttling that
