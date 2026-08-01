@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
-from typing import Protocol
+from typing import Any, Protocol
 
 import numpy as np
 import numpy.typing as npt
@@ -20,6 +20,7 @@ from .sink import Segment
 __all__ = [
     "MLX_MODEL_REPOS",
     "BackendUnavailableError",
+    "FasterWhisperBackend",
     "MLXBackend",
     "MockBackend",
     "ProgressCallback",
@@ -157,6 +158,55 @@ def _load_mlx_whisper() -> Callable[..., dict[str, object]]:
         ) from exc
     transcribe: Callable[..., dict[str, object]] = mlx_whisper.transcribe
     return transcribe
+
+
+class FasterWhisperBackend:
+    """CUDA and CPU backend built on faster-whisper.
+
+    The model is constructed once and held on the instance, so the weights stay
+    resident across every segment in a call.
+    """
+
+    name = "faster-whisper"
+
+    def __init__(
+        self,
+        model: str = "small",
+        *,
+        device: str = "auto",
+        compute_type: str = "default",
+        beam_size: int = 5,
+    ) -> None:
+        self.model = model
+        self.beam_size = beam_size
+        whisper_model = _load_faster_whisper()
+        self._model: Any = whisper_model(model, device=device, compute_type=compute_type)
+
+    def transcribe(
+        self,
+        audio: npt.NDArray[np.float32],
+        language: str | None = None,
+    ) -> str:
+        segments, _info = self._model.transcribe(
+            audio,
+            language=language,
+            beam_size=self.beam_size,
+        )
+        # transcribe returns a generator; it must be consumed before the text
+        # is available.
+        return " ".join(part.text.strip() for part in segments).strip()
+
+
+def _load_faster_whisper() -> Callable[..., Any]:
+    try:
+        from faster_whisper import WhisperModel
+    except ImportError as exc:
+        raise BackendUnavailableError(
+            "The faster-whisper backend requires faster-whisper, which is not installed. "
+            "Install it with: uv sync --extra cuda."
+        ) from exc
+    model: Callable[..., Any] = WhisperModel
+    return model
 
 
 def transcribe_segments(
