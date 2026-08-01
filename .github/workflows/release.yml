@@ -158,6 +158,15 @@ jobs:
             || { echo "the executable cannot load libopus" >&2; exit 1; }
           echo "$report" | grep -q "backend usable   True" \
             || { echo "the executable cannot import its transcription backend" >&2; exit 1; }
+          # PyNaCl reaches the bundle only through a hidden import, because its
+          # compiled module pulls in _cffi_backend from C where the freezer
+          # cannot see it. Losing that leaves an executable that starts, reports
+          # opus loaded, and can join no voice channel at all.
+          if echo "$report" | grep -q "voice support unavailable"; then
+            echo "the executable has no voice support, so it can join no channel" >&2
+            echo "$report" | grep "receive repair" >&2
+            exit 1
+          fi
 
       - name: Upload
         uses: actions/upload-artifact@v7
