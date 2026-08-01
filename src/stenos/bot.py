@@ -18,6 +18,7 @@ import discord
 from . import __version__
 from .audio import prepare_segments
 from .config import Config, ConfigError, load_config
+from .integrity import check_recording
 from .sink import OPUS_PATH_VARIABLE, TimestampedSink, bundle_directory, ensure_opus
 from .transcribe import (
     BackendUnavailableError,
@@ -35,6 +36,7 @@ from .transcript import (
     write_sidecar,
     write_transcript,
 )
+from .voice import dave_state, dave_support
 
 __all__ = [
     "RecordingResult",
@@ -272,7 +274,22 @@ def register_commands(bot: StenosBot, guild_ids: list[int] | None = None) -> Any
         await ctx.defer()
         session.voice_client.stop_recording()
         session.sink.cleanup()
+        # Read before disconnecting. The connection state is gone afterwards,
+        # and it is the only account of why a recording captured nothing.
+        dave = dave_state(session.voice_client)
         await session.voice_client.disconnect()
+
+        # Checked before the backend is loaded, so a recording that captured
+        # nothing does not wait on a model that has nothing to do.
+        integrity = check_recording(session.sink, dave)
+        if not integrity.ok:
+            log.warning(
+                "Recording captured no usable audio (%s): %s",
+                integrity.reason,
+                dave.summary,
+            )
+            await ctx.followup.send(f"Recording stopped. {integrity.detail}")
+            return
 
         # Failures are reported back to the channel rather than left to the
         # library's exception logger. The caller is waiting on a deferred
@@ -319,9 +336,19 @@ def register_commands(bot: StenosBot, guild_ids: list[int] | None = None) -> Any
             await ctx.respond("No recording is in progress.", ephemeral=True)
             return
 
+        # Packets arriving is the ground truth, so the encryption state is only
+        # raised when nothing has been captured yet. Reporting it while audio
+        # is plainly coming in would be noise, and would misread any py-cord
+        # that moves the attribute this is read from.
+        note = ""
+        if session.sink.packet_count == 0:
+            dave = dave_state(session.voice_client)
+            if not dave.receives_audio:
+                note = f" No audio has arrived yet: {dave.summary}."
+
         await ctx.respond(
             f"Recording {session.channel_name} for {format_duration(session.elapsed())}. "
-            f"{len(session.sink.user_ids)} participants have spoken so far.",
+            f"{len(session.sink.user_ids)} participants have spoken so far.{note}",
             ephemeral=True,
         )
 
@@ -368,6 +395,7 @@ def describe_environment(config: Config) -> str:
         f"output directory {config.output_dir}",
         f"keep audio       {config.keep_audio}",
         f"opus loaded      {ensure_opus()}",
+        f"encryption       {dave_support().summary}",
     ]
     return "\n".join(lines)
 

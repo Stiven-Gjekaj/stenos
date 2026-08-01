@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -25,11 +26,23 @@ class FakeVoiceState:
         self.channel = channel
 
 
+def dave_connection(*, ready: bool = True, version: int = 1) -> SimpleNamespace:
+    """A stand in for the connection state a voice client exposes."""
+    return SimpleNamespace(
+        dave_protocol_version=version,
+        dave_session=SimpleNamespace(ready=ready, status="active" if ready else "inactive"),
+    )
+
+
 class FakeVoiceClient:
-    def __init__(self) -> None:
+    def __init__(self, connection: Any = None) -> None:
         self.recording = False
         self.disconnected = False
         self.sink: Any = None
+        # Left unset rather than set to None when absent, so the attribute is
+        # genuinely missing the way it would be on a py-cord that renamed it.
+        if connection is not None:
+            self._connection = connection
 
     def start_recording(self, sink: Any, callback: Any) -> None:
         self.recording = True
@@ -43,14 +56,26 @@ class FakeVoiceClient:
 
 
 class FakeVoiceChannel:
-    def __init__(self, channel_id: int, name: str, members: list[FakeMember]) -> None:
+    def __init__(
+        self,
+        channel_id: int,
+        name: str,
+        members: list[FakeMember],
+        connection: Any = None,
+    ) -> None:
         self.id = channel_id
         self.name = name
         self.members = members
-        self.voice_client = FakeVoiceClient()
+        self.voice_client = FakeVoiceClient(connection)
 
     async def connect(self) -> FakeVoiceClient:
         return self.voice_client
+
+
+def feed(session: Any, *, packets: int = 40, payload: bytes = b"\x01\x00" * 960) -> None:
+    """Write audio into a session's sink so it passes the integrity check."""
+    for _ in range(packets):
+        session.sink.write(payload, 11)
 
 
 class FakeFollowup:
@@ -193,10 +218,13 @@ async def test_stop_transcribes_and_reports(
     assert channel.voice_client.disconnected is True
 
 
-async def test_stop_reports_a_silent_recording_without_attaching_a_file(
+async def test_stop_reports_a_recording_that_captured_nothing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(bot_module, "load_backend", lambda *args, **kwargs: MockBackend())
+    def unused(*args: object, **kwargs: object) -> None:
+        raise AssertionError("the backend must not be loaded for an empty recording")
+
+    monkeypatch.setattr(bot_module, "load_backend", unused)
     bot = make_bot(tmp_path)
     channel = FakeVoiceChannel(2, "general", [])
     author = FakeMember(11, "Alpha", channel=channel)
@@ -207,7 +235,51 @@ async def test_stop_reports_a_silent_recording_without_attaching_a_file(
     await command(bot, "stop")(stop_ctx)
 
     message, attachment = stop_ctx.followup.sent[0]
-    assert "no audio was received" in message
+    assert "No audio was received" in message
+    assert attachment is None
+    assert bot.sessions == {}
+
+
+async def test_stop_names_the_encryption_state_when_nothing_was_captured(
+    tmp_path: Path,
+) -> None:
+    # A session that never finished its handshake discards every packet, and
+    # that is the answer worth reporting rather than a guess about who spoke.
+    bot = make_bot(tmp_path)
+    channel = FakeVoiceChannel(2, "general", [], connection=dave_connection(ready=False))
+    author = FakeMember(11, "Alpha", channel=channel)
+    channel.members = [author]
+    await command(bot, "start")(FakeContext(1, author))
+
+    stop_ctx = FakeContext(1, author)
+    await command(bot, "stop")(stop_ctx)
+
+    message, _attachment = stop_ctx.followup.sent[0]
+    assert "session inactive" in message
+    assert "nobody spoke" not in message
+
+
+async def test_stop_reports_a_recording_of_pure_silence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Packets that cannot be decrypted are replaced with silence, which yields
+    # a recording of the right length holding nothing.
+    def unused(*args: object, **kwargs: object) -> None:
+        raise AssertionError("the backend must not be loaded for a silent recording")
+
+    monkeypatch.setattr(bot_module, "load_backend", unused)
+    bot = make_bot(tmp_path)
+    channel = FakeVoiceChannel(2, "general", [])
+    author = FakeMember(11, "Alpha", channel=channel)
+    channel.members = [author]
+    await command(bot, "start")(FakeContext(1, author))
+    feed(bot.sessions[1], payload=b"\x00" * 1920)
+
+    stop_ctx = FakeContext(1, author)
+    await command(bot, "stop")(stop_ctx)
+
+    message, attachment = stop_ctx.followup.sent[0]
+    assert "every sample was silence" in message
     assert attachment is None
 
 
@@ -236,6 +308,37 @@ async def test_status_reports_elapsed_time_and_speaker_count(tmp_path: Path) -> 
     assert "Recording general" in message
     assert "2 participants" in message
     assert ephemeral is True
+    # Packets are arriving, so the encryption state is not worth raising.
+    assert "No audio has arrived" not in message
+
+
+async def test_status_warns_while_no_audio_has_arrived(tmp_path: Path) -> None:
+    bot = make_bot(tmp_path)
+    channel = FakeVoiceChannel(2, "general", [], connection=dave_connection(ready=False))
+    author = FakeMember(11, "Alpha", channel=channel)
+    channel.members = [author]
+    await command(bot, "start")(FakeContext(1, author))
+
+    ctx = FakeContext(1, author)
+    await command(bot, "status")(ctx)
+
+    # Reported during the call rather than discovered afterwards, when the
+    # audio is already gone.
+    assert "No audio has arrived yet" in ctx.responses[0][0]
+    assert "session inactive" in ctx.responses[0][0]
+
+
+async def test_status_stays_quiet_once_a_session_is_ready(tmp_path: Path) -> None:
+    bot = make_bot(tmp_path)
+    channel = FakeVoiceChannel(2, "general", [], connection=dave_connection(ready=True))
+    author = FakeMember(11, "Alpha", channel=channel)
+    channel.members = [author]
+    await command(bot, "start")(FakeContext(1, author))
+
+    ctx = FakeContext(1, author)
+    await command(bot, "status")(ctx)
+
+    assert "No audio has arrived" not in ctx.responses[0][0]
 
 
 async def test_a_member_joining_mid_recording_is_cached(tmp_path: Path) -> None:
@@ -281,6 +384,7 @@ async def test_stop_reports_a_missing_backend_instead_of_hanging(
     author = FakeMember(11, "Alpha", channel=channel)
     channel.members = [author]
     await command(bot, "start")(FakeContext(1, author))
+    feed(bot.sessions[1])
 
     stop_ctx = FakeContext(1, author)
     await command(bot, "stop")(stop_ctx)
@@ -305,6 +409,7 @@ async def test_stop_reports_an_unexpected_transcription_failure(
     author = FakeMember(11, "Alpha", channel=channel)
     channel.members = [author]
     await command(bot, "start")(FakeContext(1, author))
+    feed(bot.sessions[1])
 
     stop_ctx = FakeContext(1, author)
     await command(bot, "stop")(stop_ctx)
