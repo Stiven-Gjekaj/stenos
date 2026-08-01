@@ -35,6 +35,22 @@ sections below are therefore headed by the series rather than by one version.
   that, every packet is discarded. Both that and a failed decrypt are logged
   below the default level, so neither was previously visible.
 
+- **Audio that py-cord discards is put back.** Version 2.8.1 performs the
+  transport decryption into a local, then returns a field that only its
+  encryption branch ever assigns, so a call carrying no encryption records
+  nothing at all. Stenos restores the discarded payload.
+
+  The repair is confined to the one state in which no encryption can have been
+  applied, a connection with no session, so there is no question of handing
+  still-encrypted bytes to the decoder. Every other state keeps py-cord's
+  behaviour exactly, including the silence substitution for a packet that fails
+  to decrypt.
+
+  Whether to apply it is decided by running the decryptor rather than by
+  comparing version numbers, so a py-cord that has fixed this is left alone.
+  `--check` reports the decision, and the test suite fails with a message asking
+  for the module to be deleted once the defect is gone.
+
 ### Fixed
 
 - **The documented limitation was wrong.** The README claimed py-cord had no
