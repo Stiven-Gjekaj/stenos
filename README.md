@@ -40,7 +40,9 @@ Discord clients transmit only while someone is speaking, so the gaps between pac
 
 Python 3.11, 3.12, and 3.13 are supported.
 
-Voice receive requires libopus. py-cord bundles a binary for Windows only; on macOS and Linux it resolves the library through `ctypes.util.find_library`, so the system package is required on both. A missing libopus fails at runtime rather than at import, which is why `stenos --check` reports whether it loaded.
+Voice receive requires libopus. py-cord bundles a binary for Windows only; on macOS and Linux it resolves the library through `ctypes.util.find_library`, so the system package is required on both.
+
+That search does not cover the Homebrew prefix on Apple Silicon, so Stenos looks in `/opt/homebrew/lib` and `/usr/local/lib` itself and `brew install opus` is sufficient. If your library lives somewhere else, set `OPUS_LIBRARY_PATH` to its full path. A missing libopus fails at runtime rather than at import, which is why `stenos --check` reports whether it loaded.
 
 ## Setup
 
