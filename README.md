@@ -33,12 +33,14 @@ Discord clients transmit only while someone is speaking, so the gaps between pac
 
 | Operating system | Architecture | Backend | Additional prerequisite |
 |---|---|---|---|
-| macOS 14+ | arm64 (Apple Silicon) | `mlx-whisper` | None |
-| macOS 13+ | x86_64 | `faster-whisper` (CPU) | None |
+| macOS 14+ | arm64 (Apple Silicon) | `mlx-whisper` | `opus` via Homebrew |
+| macOS 13+ | x86_64 | `faster-whisper` (CPU) | `opus` via Homebrew |
 | Linux | x86_64, aarch64 | `faster-whisper` (CUDA or CPU) | `libopus0`, `libsodium23` |
 | Windows 10+ | x86_64 | `faster-whisper` (CUDA or CPU) | None |
 
-Python 3.11, 3.12, and 3.13 are supported. py-cord bundles opus and libsodium binaries for macOS and Windows; on Linux both come from the system package manager, and voice receive fails at runtime rather than at import when they are missing.
+Python 3.11, 3.12, and 3.13 are supported.
+
+Voice receive requires libopus. py-cord bundles a binary for Windows only; on macOS and Linux it resolves the library through `ctypes.util.find_library`, so the system package is required on both. A missing libopus fails at runtime rather than at import, which is why `stenos --check` reports whether it loaded.
 
 ## Setup
 
@@ -59,13 +61,13 @@ Install [uv](https://docs.astral.sh/uv/), then clone the repository and run the 
 macOS, Apple Silicon:
 
 ```sh
-uv sync --extra mlx
+brew install opus && uv sync --extra mlx
 ```
 
 macOS on Intel:
 
 ```sh
-uv sync --extra cuda
+brew install opus && uv sync --extra cuda
 ```
 
 Linux:
