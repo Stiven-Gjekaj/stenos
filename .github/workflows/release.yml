@@ -1,7 +1,10 @@
 name: release
 
-# Builds the Python distributions and a standalone executable for each
-# supported platform, then attaches them to a GitHub release.
+# Builds a standalone executable for each supported platform and attaches
+# them, with the installers and one checksum file, to a GitHub release.
+#
+# No wheel and no source distribution. Stenos is a program to run, not a
+# library to import, so those would be noise beside the executables.
 #
 # Tags are created only on a major, beta, or alpha version bump, never on the
 # commit counter. See the versioning section of the README.
@@ -36,19 +39,13 @@ permissions:
   contents: write
 
 jobs:
-  distributions:
-    name: wheel and sdist
+  verify:
+    name: verify the version
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
         with:
           ref: ${{ inputs.tag || github.ref }}
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v7
-        with:
-          enable-cache: true
-          cache-dependency-glob: uv.lock
 
       - name: Verify the tag matches the packaged version
         if: inputs.tag || startsWith(github.ref, 'refs/tags/v')
@@ -62,18 +59,9 @@ jobs:
             exit 1
           fi
 
-      - name: Build
-        run: uv build
-
-      - name: Upload
-        uses: actions/upload-artifact@v4
-        with:
-          name: distributions
-          path: dist/*
-          if-no-files-found: error
-
   executables:
     name: executable ${{ matrix.target }}
+    needs: verify
     runs-on: ${{ matrix.os }}
     strategy:
       # One platform failing should not hide whether the others work. On a real
@@ -179,7 +167,7 @@ jobs:
 
   publish:
     name: publish the release
-    needs: [distributions, executables]
+    needs: [verify, executables]
     runs-on: ubuntu-latest
     # Only a tag publishes. A manual run with no tag stops here, having proven
     # every platform builds and runs, and leaves the archives as artifacts.
@@ -202,6 +190,9 @@ jobs:
           path: assets
           merge-multiple: true
 
+      # Only the executables and the installers. A release of a bot nobody
+      # imports as a library is a place to download a program from, so the
+      # wheel and the source distribution would be noise beside them.
       - name: Gather the installers
         run: |
           set -euo pipefail

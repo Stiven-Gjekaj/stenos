@@ -385,8 +385,9 @@ to end. Those run on Linux, macOS, and Windows.
 | `ci` | push, pull request | Lint, type check, and test on Python 3.11 to 3.13 with a 70 percent coverage floor |
 | `platforms` | push to `main`, pull request, weekly | Build the wheel and verify it installs and passes tests on five platform and version combinations |
 | `compat` | push to `main`, pull request, weekly | Run the offline pipeline on Linux, macOS, and Windows |
-| `release` | tag matching `v*` | Build distributions and executables, and draft a release |
+| `release` | tag matching `v*` | Build an executable per platform and draft a release with them, the installers, and one checksum file |
 | `tag` | manual dispatch | Create a release tag after validating it against `pyproject.toml` |
+| `cleanup` | manual dispatch | Remove a release, and optionally its tag |
 
 `main` is expected to require passing CI before merge, configured under
 **Settings, Branches, Branch protection rules** with the `lint`, `typecheck`,

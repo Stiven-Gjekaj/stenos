@@ -72,8 +72,12 @@ bump, so the sections below skip the commit counter.
 
 - **Release assets.** Each platform gets a `.zip` holding the executable, the
   README, the licence, and `.env.example`. A single `SHA256SUMS` covers every
-  asset, and both installers are attached alongside. The wheel and the source
-  distribution are still published for `pip` and `uv` users.
+  asset, and both installers are attached alongside.
+
+  A release carries nothing else. No wheel and no source distribution: Stenos
+  is a program to run rather than a library to import, so those would be
+  noise beside the executables. Install from source with `uv sync` if that is
+  what you want, which the README covers.
 
 ## 0.1.1.0 (2026-08-01)
 
