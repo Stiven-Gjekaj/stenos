@@ -15,7 +15,8 @@ _One timestamped, speaker-attributed transcript. No audio leaves the machine_
 <p align="center">
   <a href="https://github.com/Stiven-Gjekaj/stenos/actions/workflows/ci.yml"><img src="https://github.com/Stiven-Gjekaj/stenos/actions/workflows/ci.yml/badge.svg" alt="CI"/></a>
   <a href="https://github.com/Stiven-Gjekaj/stenos/actions/workflows/compat.yml"><img src="https://github.com/Stiven-Gjekaj/stenos/actions/workflows/compat.yml/badge.svg" alt="Cross-platform behaviour"/></a>
-  <a href="https://github.com/Stiven-Gjekaj/stenos/releases/latest"><img src="https://img.shields.io/github/v/release/Stiven-Gjekaj/stenos?style=flat-square&color=blue&label=release" alt="The latest GitHub release"/></a>
+  <a href="https://github.com/Stiven-Gjekaj/stenos/releases"><img src="https://img.shields.io/github/v/release/Stiven-Gjekaj/stenos?include_prereleases&style=flat-square&color=orange&label=pre-release" alt="The latest pre-release"/></a>
+  <img src="https://img.shields.io/badge/release-none-lightgrey?style=flat-square" alt="No stable release yet"/>
   <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="MIT License"/>
 </p>
 
@@ -437,7 +438,21 @@ to its right to zero. The version in `pyproject.toml` is the single source of
 truth, and every commit subject begins with the version that commit produces,
 which makes `git log --oneline` a complete version ledger.
 
-Tags are created only on an `X`, `N`, or `V` bump, through the `tag` workflow.
+A release covers a whole series rather than one commit: every commit sharing an
+`X.N.V` belongs to it, and the tag is cut at the last of them through the `tag`
+workflow. One release per series, so a series that already has a tag is refused
+a second one.
+
+The component that opened the series names the release, which is what the two
+version badges above track:
+
+| Series | Release | Example |
+| --- | --- | --- |
+| `V` is non-zero | Alpha, a pre-release | `Alpha 0.1.3` |
+| `V` is zero and `N` is non-zero | Beta | `Beta 0.2.0` |
+| `V` and `N` are both zero | Release | `Release 1.0.0` |
+
+Everything so far is an alpha, so the release badge reads `none`.
 
 ---
 
