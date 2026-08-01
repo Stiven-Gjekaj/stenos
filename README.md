@@ -446,13 +446,15 @@ a second one.
 The component that opened the series names the release, which is what the two
 version badges above track:
 
-| Series | Release | Example |
+| Series | Release | Title |
 | --- | --- | --- |
-| `V` is non-zero | Alpha, a pre-release | `Alpha 0.1.3` |
-| `V` is zero and `N` is non-zero | Beta | `Beta 0.2.0` |
-| `V` and `N` are both zero | Release | `Release 1.0.0` |
+| `V` is non-zero | Alpha, a pre-release | `Alpha v0.1.3` |
+| `V` is zero and `N` is non-zero | Beta | `Beta v0.2.0` |
+| `V` and `N` are both zero | Release | `Release v1.0.0` |
 
-Everything so far is an alpha, so the release badge reads `none`.
+An alpha is marked as a pre-release on GitHub, so the two badges resolve from
+what GitHub records rather than from anything kept in step by hand. Everything
+so far is an alpha, which is why the release badge reads `none`.
 
 ---
 
