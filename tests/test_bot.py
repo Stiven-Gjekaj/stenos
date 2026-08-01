@@ -69,31 +69,31 @@ def test_negative_durations_clamp_to_zero() -> None:
 
 
 def test_names_are_cached_when_members_are_seen() -> None:
-    session = session_for([FakeMember(11, "Stiven"), FakeMember(22, "Enxhi")])
+    session = session_for([FakeMember(11, "Alpha"), FakeMember(22, "Bravo")])
 
-    assert session.names == {11: "Stiven", 22: "Enxhi"}
+    assert session.names == {11: "Alpha", 22: "Bravo"}
 
 
 def test_a_member_joining_later_is_cached() -> None:
-    session = session_for([FakeMember(11, "Stiven")])
+    session = session_for([FakeMember(11, "Alpha")])
 
-    session.remember(FakeMember(33, "Ana"))
+    session.remember(FakeMember(33, "Charlie"))
 
-    assert session.names[33] == "Ana"
+    assert session.names[33] == "Charlie"
 
 
 def test_cached_names_survive_the_member_leaving() -> None:
     # The cache exists precisely so a departed participant stays resolvable.
-    session = session_for([FakeMember(11, "Stiven")])
+    session = session_for([FakeMember(11, "Alpha")])
     names_snapshot = dict(session.names)
 
-    assert names_snapshot[11] == "Stiven"
+    assert names_snapshot[11] == "Alpha"
 
 
 def test_non_ascii_display_names_are_cached_intact() -> None:
-    session = session_for([FakeMember(11, "Zoë 🎧"), FakeMember(22, "会議")])
+    session = session_for([FakeMember(11, "Dëlta 🎧"), FakeMember(22, "会議")])
 
-    assert session.names == {11: "Zoë 🎧", 22: "会議"}
+    assert session.names == {11: "Dëlta 🎧", 22: "会議"}
 
 
 def test_elapsed_time_advances_from_the_start() -> None:

@@ -17,7 +17,7 @@ from stenos.transcript import (
 
 RECORDED_AT = datetime(2026, 8, 1, 16, 14, 43, tzinfo=UTC)
 
-NAMES = {11: "Stiven", 22: "Enxhi"}
+NAMES = {11: "Alpha", 22: "Bravo"}
 
 
 def result(start: float, user_id: int, text: str, duration: float = 1.0) -> TranscribedSegment:
@@ -33,8 +33,8 @@ def test_interleaved_speakers_sort_by_offset() -> None:
     lines = merge(results, NAMES)
 
     assert [(line.start, line.speaker) for line in lines] == [
-        (252.0, "Stiven"),
-        (259.0, "Enxhi"),
+        (252.0, "Alpha"),
+        (259.0, "Bravo"),
     ]
 
 
@@ -47,7 +47,7 @@ def test_rendered_transcript_matches_the_documented_shape() -> None:
     body = render(merge(results, NAMES))
 
     assert body == (
-        "[00:04:12] Stiven: so about the asset pipeline\n[00:04:19] Enxhi: which part broke\n"
+        "[00:04:12] Alpha: so about the asset pipeline\n[00:04:19] Bravo: which part broke\n"
     )
 
 
@@ -59,7 +59,7 @@ def test_many_speakers_interleave_correctly() -> None:
         result(20.0, 33, "second"),
     ]
 
-    lines = merge(results, {**NAMES, 33: "Ana"})
+    lines = merge(results, {**NAMES, 33: "Charlie"})
 
     assert [line.text for line in lines] == ["first", "second", "third", "fourth"]
 
@@ -109,7 +109,7 @@ def test_no_results_render_as_an_empty_transcript() -> None:
 
 
 def test_transcript_is_written_as_utf8(tmp_path: Path) -> None:
-    names = {11: "Enxhi", 22: "会議", 33: "Zoë 🎧"}
+    names = {11: "Bravo", 22: "会議", 33: "Dëlta 🎧"}
     results = [
         result(1.0, 11, "ç'kemi, si po shkon"),
         result(2.0, 22, "こんにちは"),
@@ -118,11 +118,11 @@ def test_transcript_is_written_as_utf8(tmp_path: Path) -> None:
 
     path = write_transcript(tmp_path / "out.txt", merge(results, names))
 
-    assert path.read_text(encoding="utf-8").startswith("[00:00:01] Enxhi: ç'kemi")
+    assert path.read_text(encoding="utf-8").startswith("[00:00:01] Bravo: ç'kemi")
 
 
 def test_written_bytes_round_trip_exactly(tmp_path: Path) -> None:
-    names = {11: "Zoë"}
+    names = {11: "Dëlta"}
     lines = merge([result(1.0, 11, "ë ç 会議 🎧")], names)
 
     path = write_transcript(tmp_path / "out.txt", lines)
@@ -181,7 +181,7 @@ def test_sidecar_carries_run_metadata() -> None:
     assert payload["duration"] == 12.5
     assert payload["backend"] == "mlx"
     assert payload["model"] == "small"
-    assert payload["speakers"] == {"11": "Stiven", "22": "Enxhi"}
+    assert payload["speakers"] == {"11": "Alpha", "22": "Bravo"}
 
 
 def test_sidecar_segments_are_ordered_by_offset() -> None:
@@ -199,7 +199,7 @@ def test_sidecar_segments_are_ordered_by_offset() -> None:
 
 
 def test_sidecar_round_trips_non_ascii_without_escaping(tmp_path: Path) -> None:
-    names = {11: "Zoë 🎧"}
+    names = {11: "Dëlta 🎧"}
     payload = build_sidecar(
         [result(1.0, 11, "ç'kemi 会議")],
         names,

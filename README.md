@@ -5,16 +5,16 @@ A Discord bot that records every voice participant separately and produces one t
 ## Sample output
 
 ```
-[00:00:04] Stiven: right, so about the asset pipeline
-[00:00:09] Enxhi: which part broke
-[00:00:12] Stiven: the exporter, it stopped writing normals on anything with a mirror modifier
-[00:00:21] Enxhi: since when
-[00:00:23] Stiven: since we bumped blender, i think
-[00:01:02] Ana: i can reproduce it on my machine if you want a second data point
-[00:01:09] Stiven: please, and check whether it also drops tangents
-[00:01:17] Ana: will do
-[00:04:12] Enxhi: ok so i found it, the exporter reads the evaluated mesh before the modifier stack runs
-[00:04:19] Stiven: that would explain the mirror case exactly
+[00:00:04] Alpha: right, so about the asset pipeline
+[00:00:09] Bravo: which part broke
+[00:00:12] Alpha: the exporter, it stopped writing normals on anything with a mirror modifier
+[00:00:21] Bravo: since when
+[00:00:23] Alpha: since we bumped blender, i think
+[00:01:02] Charlie: i can reproduce it on my machine if you want a second data point
+[00:01:09] Alpha: please, and check whether it also drops tangents
+[00:01:17] Charlie: will do
+[00:04:12] Bravo: ok so i found it, the exporter reads the evaluated mesh before the modifier stack runs
+[00:04:19] Alpha: that would explain the mirror case exactly
 ```
 
 Alongside it, a `.json` sidecar carries the raw segments, their offsets and durations, and the user identifiers, for downstream tooling.

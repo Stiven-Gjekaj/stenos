@@ -17,8 +17,8 @@ from stenos.transcript import build_sidecar, merge, render, write_sidecar, write
 
 # Albanian, CJK, emoji, and a right-to-left script.
 SPEAKERS = {
-    11: "Enxhi",
-    22: "Zoë 🎧",
+    11: "Bravo",
+    22: "Dëlta 🎧",
     33: "会議",
     44: "مستخدم",
 }
@@ -45,7 +45,7 @@ def test_every_script_survives_the_round_trip(tmp_path: Path) -> None:
     path = write_transcript(tmp_path / "transcript.txt", merge(UTTERANCES, SPEAKERS))
     body = path.read_text(encoding="utf-8")
 
-    for fragment in ["ç'kemi", "përshëndetje", "🎧", "会議", "مرحبا", "Zoë"]:
+    for fragment in ["ç'kemi", "përshëndetje", "🎧", "会議", "مرحبا", "Dëlta"]:
         assert fragment in body
 
 
@@ -63,7 +63,7 @@ def test_output_is_independent_of_the_preferred_encoding(tmp_path: Path) -> None
     # wherever that default is not UTF-8.
     path = write_transcript(tmp_path / "transcript.txt", merge(UTTERANCES, SPEAKERS))
 
-    assert path.read_bytes().decode("utf-8").startswith("[00:00:00] Enxhi:")
+    assert path.read_bytes().decode("utf-8").startswith("[00:00:00] Bravo:")
     assert locale.getpreferredencoding(False) is not None
 
 

@@ -1,0 +1,148 @@
+# Architecture
+
+How a call becomes a transcript, and why each stage is built the way it is.
+
+```
+Discord voice  ->  sink.py  ->  audio.py  ->  transcribe.py  ->  transcript.py
+   packets        segments      16 kHz mono      text            merged file
+```
+
+Every stage after the sink is pure: it takes values and returns values, touches
+no network, and is exercised offline by the test suite. Only `sink.py` and the
+command handlers in `bot.py` know that Discord exists.
+
+---
+
+## 1. Receiving, `sink.py`
+
+Discord sends a separate stream per participant and decodes it to 48 kHz
+stereo signed 16 bit audio. Attribution is therefore free: the speaker is
+whichever stream the packet arrived on. Position in the call is not.
+
+`TimestampedSink` subclasses the py-cord sink and overrides `write`. On each
+packet it reads a clock, fixes the first reading as the recording origin, and
+appends to that user's open segment. When the interval since that user's
+previous packet exceeds `SEGMENT_GAP`, it closes the segment and opens a new
+one whose `start` is the offset from the origin.
+
+Two consequences worth stating:
+
+- **No voice activity detector is needed.** A Discord client transmits only
+  while someone speaks, so the gaps between packets already are the silence.
+- **Late joiners land correctly.** The sink bundled with py-cord concatenates
+  each user's packets into one buffer, which discards when they spoke. A
+  participant who joins ten minutes in then appears at the start of the merged
+  transcript. This sink records arrival time, so the merge is correct by
+  construction rather than by correction.
+
+The clock is a constructor argument. Tests drive segmentation with scripted
+timestamps and never sleep.
+
+---
+
+## 2. Converting, `audio.py`
+
+Whisper consumes 16 kHz mono float32. The conversion is exactly 3:1, and runs
+in process with numpy: a one-hour call yields several hundred segments, and
+spawning a resampler per segment would dominate the total.
+
+`pcm_to_mono` reinterprets the buffer as little endian int16 regardless of host
+byte order, discards a trailing partial frame, averages the two channels, and
+scales to `[-1, 1)`.
+
+`resample` low-passes with a Hamming windowed sinc before decimating. Without
+that filter a 20 kHz component would fold to 4 kHz and land in the middle of
+the speech band. The filter is measured in the test suite: a 440 Hz tone
+survives with its amplitude intact while a 20 kHz tone is attenuated by about
+63 dB.
+
+`prepare_segments` discards anything shorter than `MIN_SEGMENT`. Whisper
+transcribes near-silence confidently, inventing lines like "Thank you." from
+breath noise, so brief fragments are dropped before the model sees them rather
+than filtered out of the transcript afterwards.
+
+scipy is used when it happens to be installed and is not a dependency. The
+numpy path is the one that normally runs.
+
+---
+
+## 3. Transcribing, `transcribe.py`
+
+`TranscriptionBackend` is a protocol with one method. Three implementations
+satisfy it:
+
+| Backend | Where it runs | Notes |
+| --- | --- | --- |
+| `MLXBackend` | Apple Silicon | mlx-whisper caches the model against the repository path, so a stable path keeps the weights resident |
+| `FasterWhisperBackend` | CUDA and CPU | Constructs the model once and holds it on the instance |
+| `MockBackend` | Everywhere | Deterministic. Ships with the package so the pipeline can be exercised against an installed wheel with no weights present |
+
+The model is loaded once and reused across every segment. Shelling out to a
+separate binary per segment would make process start and model load dominate
+the runtime of a call with hundreds of short clips.
+
+Model repositories are mapped explicitly rather than derived from the model
+name, because the upstream names are not uniformly suffixed:
+`whisper-small-mlx` but `whisper-medium-mlx-fp32`.
+
+`backend_status` attempts only the import, never the model construction, so a
+diagnostic never downloads weights.
+
+---
+
+## 4. Merging and writing, `transcript.py`
+
+Segments from every speaker are flattened to `(start, user_id, text)`, sorted
+by offset, and rendered:
+
+```
+[00:04:12] Alpha: so about the asset pipeline
+[00:04:19] Bravo: which part broke
+```
+
+Names come from a cache populated while recording, because a participant may
+disconnect before the call ends, after which the guild no longer resolves them.
+
+Three portability decisions live here, each covered by the compatibility suite:
+
+- Filenames are sanitised on **every** platform, not only on Windows, so a
+  transcript recorded on Linux can be copied to Windows unchanged. A reserved
+  device name is escaped by prefix rather than suffix, because Windows resolves
+  the device from the component before the first dot: `NUL.txt` is still the
+  NUL device.
+- Timestamps use ISO 8601 **basic** form. The extended form embeds colons,
+  which are illegal in Windows filenames.
+- Files are opened with an explicit encoding and `newline="\n"`. Windows
+  otherwise writes the system code page and translates line endings, so the
+  same call would produce different bytes on different hosts.
+
+---
+
+## 5. Commands, `bot.py`
+
+`run_pipeline` is a plain function taking a sink, a name cache, and a config.
+It is deliberately separate from the command handlers, which is what lets the
+whole path run offline in tests and on a worker thread at runtime.
+
+Transcription is dispatched with `asyncio.to_thread`. Blocking the event loop
+for minutes would stop the gateway heartbeat and drop the connection.
+
+`/record start` and `/record stop` post visible, non-ephemeral messages. That is
+deliberate and is covered in the consent section of the README: there is no
+silent recording mode.
+
+A recording that received no packets is reported as such rather than presented
+as an empty transcript, and a failed transcription is reported rather than left
+as a deferred response that never resolves.
+
+---
+
+## Adding a backend
+
+1. Implement `transcribe(audio, language) -> str` and a `name` attribute.
+2. Add an import helper that raises `BackendUnavailableError` with an install
+   instruction, following `_load_mlx_whisper`.
+3. Extend `resolve_backend` in `config.py` if it should be selected
+   automatically on some platform.
+4. Add the dependency as an optional extra in `pyproject.toml`, never as a core
+   one. Continuous integration must never pull model weights.

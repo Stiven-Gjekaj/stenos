@@ -95,7 +95,7 @@ def command(bot: Any, name: str) -> Any:
 
 async def test_start_refuses_outside_a_guild(tmp_path: Path) -> None:
     bot = make_bot(tmp_path)
-    ctx = FakeContext(None, FakeMember(11, "Stiven"))
+    ctx = FakeContext(None, FakeMember(11, "Alpha"))
 
     await command(bot, "start")(ctx)
 
@@ -105,7 +105,7 @@ async def test_start_refuses_outside_a_guild(tmp_path: Path) -> None:
 
 async def test_start_refuses_when_the_caller_is_not_in_a_voice_channel(tmp_path: Path) -> None:
     bot = make_bot(tmp_path)
-    ctx = FakeContext(1, FakeMember(11, "Stiven", channel=None))
+    ctx = FakeContext(1, FakeMember(11, "Alpha", channel=None))
 
     await command(bot, "start")(ctx)
 
@@ -116,7 +116,7 @@ async def test_start_refuses_when_the_caller_is_not_in_a_voice_channel(tmp_path:
 async def test_start_joins_and_announces_visibly(tmp_path: Path) -> None:
     bot = make_bot(tmp_path)
     channel = FakeVoiceChannel(2, "general", [])
-    author = FakeMember(11, "Stiven", channel=channel)
+    author = FakeMember(11, "Alpha", channel=channel)
     channel.members = [author]
     ctx = FakeContext(1, author)
 
@@ -132,19 +132,19 @@ async def test_start_joins_and_announces_visibly(tmp_path: Path) -> None:
 async def test_start_caches_names_of_members_already_present(tmp_path: Path) -> None:
     bot = make_bot(tmp_path)
     channel = FakeVoiceChannel(2, "general", [])
-    author = FakeMember(11, "Stiven", channel=channel)
-    channel.members = [author, FakeMember(22, "Enxhi"), FakeMember(33, "Zoë 🎧")]
+    author = FakeMember(11, "Alpha", channel=channel)
+    channel.members = [author, FakeMember(22, "Bravo"), FakeMember(33, "Dëlta 🎧")]
     ctx = FakeContext(1, author)
 
     await command(bot, "start")(ctx)
 
-    assert bot.sessions[1].names == {11: "Stiven", 22: "Enxhi", 33: "Zoë 🎧"}
+    assert bot.sessions[1].names == {11: "Alpha", 22: "Bravo", 33: "Dëlta 🎧"}
 
 
 async def test_start_refuses_a_second_concurrent_recording(tmp_path: Path) -> None:
     bot = make_bot(tmp_path)
     channel = FakeVoiceChannel(2, "general", [])
-    author = FakeMember(11, "Stiven", channel=channel)
+    author = FakeMember(11, "Alpha", channel=channel)
     channel.members = [author]
 
     await command(bot, "start")(FakeContext(1, author))
@@ -157,7 +157,7 @@ async def test_start_refuses_a_second_concurrent_recording(tmp_path: Path) -> No
 
 async def test_stop_refuses_when_nothing_is_recording(tmp_path: Path) -> None:
     bot = make_bot(tmp_path)
-    ctx = FakeContext(1, FakeMember(11, "Stiven"))
+    ctx = FakeContext(1, FakeMember(11, "Alpha"))
 
     await command(bot, "stop")(ctx)
 
@@ -174,7 +174,7 @@ async def test_stop_transcribes_and_reports(
     )
     bot = make_bot(tmp_path)
     channel = FakeVoiceChannel(2, "general", [])
-    author = FakeMember(11, "Stiven", channel=channel)
+    author = FakeMember(11, "Alpha", channel=channel)
     channel.members = [author]
     await command(bot, "start")(FakeContext(1, author))
 
@@ -199,7 +199,7 @@ async def test_stop_reports_a_silent_recording_without_attaching_a_file(
     monkeypatch.setattr(bot_module, "load_backend", lambda *args, **kwargs: MockBackend())
     bot = make_bot(tmp_path)
     channel = FakeVoiceChannel(2, "general", [])
-    author = FakeMember(11, "Stiven", channel=channel)
+    author = FakeMember(11, "Alpha", channel=channel)
     channel.members = [author]
     await command(bot, "start")(FakeContext(1, author))
 
@@ -213,7 +213,7 @@ async def test_stop_reports_a_silent_recording_without_attaching_a_file(
 
 async def test_status_refuses_when_nothing_is_recording(tmp_path: Path) -> None:
     bot = make_bot(tmp_path)
-    ctx = FakeContext(1, FakeMember(11, "Stiven"))
+    ctx = FakeContext(1, FakeMember(11, "Alpha"))
 
     await command(bot, "status")(ctx)
 
@@ -223,7 +223,7 @@ async def test_status_refuses_when_nothing_is_recording(tmp_path: Path) -> None:
 async def test_status_reports_elapsed_time_and_speaker_count(tmp_path: Path) -> None:
     bot = make_bot(tmp_path)
     channel = FakeVoiceChannel(2, "general", [])
-    author = FakeMember(11, "Stiven", channel=channel)
+    author = FakeMember(11, "Alpha", channel=channel)
     channel.members = [author]
     await command(bot, "start")(FakeContext(1, author))
     bot.sessions[1].sink.write(b"\x00" * 3840, 11)
@@ -241,22 +241,22 @@ async def test_status_reports_elapsed_time_and_speaker_count(tmp_path: Path) -> 
 async def test_a_member_joining_mid_recording_is_cached(tmp_path: Path) -> None:
     bot = make_bot(tmp_path)
     channel = FakeVoiceChannel(2, "general", [])
-    author = FakeMember(11, "Stiven", channel=channel)
+    author = FakeMember(11, "Alpha", channel=channel)
     channel.members = [author]
     await command(bot, "start")(FakeContext(1, author))
 
-    joiner = FakeMember(44, "Ana", channel=channel)
+    joiner = FakeMember(44, "Charlie", channel=channel)
     joiner.guild = FakeGuild(1)  # type: ignore[attr-defined]
     await bot.on_voice_state_update(joiner, FakeVoiceState(None), FakeVoiceState(channel))
 
-    assert bot.sessions[1].names[44] == "Ana"
+    assert bot.sessions[1].names[44] == "Charlie"
 
 
 async def test_voice_state_updates_for_other_channels_are_ignored(tmp_path: Path) -> None:
     bot = make_bot(tmp_path)
     channel = FakeVoiceChannel(2, "general", [])
     other = FakeVoiceChannel(99, "elsewhere", [])
-    author = FakeMember(11, "Stiven", channel=channel)
+    author = FakeMember(11, "Alpha", channel=channel)
     channel.members = [author]
     await command(bot, "start")(FakeContext(1, author))
 
@@ -278,7 +278,7 @@ async def test_stop_reports_a_missing_backend_instead_of_hanging(
     monkeypatch.setattr(bot_module, "load_backend", unavailable)
     bot = make_bot(tmp_path)
     channel = FakeVoiceChannel(2, "general", [])
-    author = FakeMember(11, "Stiven", channel=channel)
+    author = FakeMember(11, "Alpha", channel=channel)
     channel.members = [author]
     await command(bot, "start")(FakeContext(1, author))
 
@@ -302,7 +302,7 @@ async def test_stop_reports_an_unexpected_transcription_failure(
     monkeypatch.setattr(bot_module, "run_pipeline", explode)
     bot = make_bot(tmp_path)
     channel = FakeVoiceChannel(2, "general", [])
-    author = FakeMember(11, "Stiven", channel=channel)
+    author = FakeMember(11, "Alpha", channel=channel)
     channel.members = [author]
     await command(bot, "start")(FakeContext(1, author))
 

@@ -25,7 +25,7 @@ RECORDED_AT = datetime(2026, 8, 1, 16, 14, 43, tzinfo=UTC)
 #: One 20 ms Discord voice frame of non-silent audio.
 FRAME = b"\x01\x00" * (BYTES_PER_SECOND // 100)
 
-SPEAKERS = {11: "Stiven", 22: "Enxhi", 33: "Zoë 🎧"}
+SPEAKERS = {11: "Alpha", 22: "Bravo", 33: "Dëlta 🎧"}
 
 TRANSCRIPTS = [
     "so about the asset pipeline",
@@ -91,10 +91,10 @@ def test_the_transcript_is_ordered_and_attributed(result) -> None:  # type: igno
     body = result.transcript_path.read_text(encoding="utf-8")
 
     assert body == (
-        "[00:00:00] Stiven: so about the asset pipeline\n"
-        "[00:00:05] Enxhi: which part broke\n"
-        "[00:00:12] Stiven: the exporter, it stopped writing normals\n"
-        "[00:02:00] Zoë 🎧: përshëndetje 会議\n"
+        "[00:00:00] Alpha: so about the asset pipeline\n"
+        "[00:00:05] Bravo: which part broke\n"
+        "[00:00:12] Alpha: the exporter, it stopped writing normals\n"
+        "[00:02:00] Dëlta 🎧: përshëndetje 会議\n"
     )
 
 
@@ -102,7 +102,7 @@ def test_the_late_speaker_keeps_its_offset(result) -> None:  # type: ignore[no-u
     # A speaker who joins two minutes in must appear two minutes in.
     body = result.transcript_path.read_text(encoding="utf-8")
 
-    assert "[00:02:00] Zoë 🎧:" in body
+    assert "[00:02:00] Dëlta 🎧:" in body
 
 
 def test_output_files_exist_with_a_sanitised_name(result) -> None:  # type: ignore[no-untyped-def]
@@ -122,7 +122,7 @@ def test_the_sidecar_records_raw_timings_and_identifiers(result) -> None:  # typ
 
     assert [segment["user_id"] for segment in payload["segments"]] == [11, 22, 11, 33]
     assert [round(segment["start"]) for segment in payload["segments"]] == [0, 5, 12, 120]
-    assert payload["speakers"]["33"] == "Zoë 🎧"
+    assert payload["speakers"]["33"] == "Dëlta 🎧"
     assert payload["backend"] == "mock"
 
 
