@@ -43,7 +43,7 @@ jobs:
     name: verify the version
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.tag || github.ref }}
 
@@ -86,7 +86,7 @@ jobs:
           - target: windows-x86_64
             os: windows-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.tag || github.ref }}
 
@@ -180,7 +180,7 @@ jobs:
       # This job builds nothing. It checks out for two reasons: the release
       # notes are read from CHANGELOG.md, and the installers are attached from
       # scripts/, and both must be the versions that release ships.
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.tag || github.ref }}
 
