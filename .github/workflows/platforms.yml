@@ -1,0 +1,107 @@
+name: platforms
+
+# Verifies the package builds and installs as a distributed artifact on every
+# supported operating system. The ci workflow tests the source tree; this one
+# tests the built wheel in a clean environment.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Weekly, to catch upstream breakage in py-cord or the audio dependencies
+    # without a push.
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: platforms-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  wheel:
+    name: ${{ matrix.os }} python ${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            python-version: "3.11"
+          - os: ubuntu-latest
+            python-version: "3.12"
+          - os: ubuntu-latest
+            python-version: "3.13"
+          # Closest proxy for the primary deployment target.
+          - os: macos-latest
+            python-version: "3.12"
+          - os: macos-13
+            python-version: "3.12"
+          - os: windows-latest
+            python-version: "3.12"
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+          python-version: ${{ matrix.python-version }}
+
+      - name: Build wheel and sdist
+        run: uv build
+
+      - name: Install the wheel into a clean environment
+        shell: bash
+        run: |
+          uv venv "$RUNNER_TEMP/probe" --python ${{ matrix.python-version }}
+          uv pip install --python "$RUNNER_TEMP/probe" dist/*.whl
+          uv pip install --python "$RUNNER_TEMP/probe" pytest pytest-asyncio
+
+      - name: Verify the package imports
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            PYTHON="$RUNNER_TEMP/probe/Scripts/python.exe"
+          else
+            PYTHON="$RUNNER_TEMP/probe/bin/python"
+          fi
+          "$PYTHON" -c "import stenos; print('stenos', stenos.__version__)"
+          "$PYTHON" -c "import stenos.bot, stenos.sink, stenos.audio, stenos.transcribe, stenos.transcript"
+
+      - name: Verify the command line entry point responds
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            "$RUNNER_TEMP/probe/Scripts/stenos.exe" --help
+            "$RUNNER_TEMP/probe/Scripts/stenos.exe" --version
+          else
+            "$RUNNER_TEMP/probe/bin/stenos" --help
+            "$RUNNER_TEMP/probe/bin/stenos" --version
+          fi
+
+      - name: Run the test suite against the installed package
+        shell: bash
+        # Run from a directory without the source tree so imports resolve to
+        # the installed wheel rather than to src. pyproject.toml travels with
+        # the tests because it carries the pytest configuration they need.
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            PYTHON="$RUNNER_TEMP/probe/Scripts/python.exe"
+          else
+            PYTHON="$RUNNER_TEMP/probe/bin/python"
+          fi
+          mkdir -p "$RUNNER_TEMP/against-wheel"
+          cp -r tests "$RUNNER_TEMP/against-wheel/tests"
+          cp pyproject.toml "$RUNNER_TEMP/against-wheel/"
+          cd "$RUNNER_TEMP/against-wheel"
+          "$PYTHON" -m pytest tests -q -p no:cacheprovider -m "not compat"
+          "$PYTHON" -c "import stenos, pathlib, sys; sys.exit(0 if 'site-packages' in stenos.__file__ else 1)"
+
+      - name: Upload distributions
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
