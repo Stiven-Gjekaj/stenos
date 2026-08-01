@@ -128,24 +128,50 @@ def test_a_probe_that_raises_leaves_pycord_alone(monkeypatch: pytest.MonkeyPatch
     assert PacketDecryptor.decrypt_rtp is _STOCK_DECRYPT_RTP
 
 
-def test_missing_internals_are_reported_rather_than_raised(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def _refuse_import(monkeypatch: pytest.MonkeyPatch, target: str, error: Exception) -> None:
     import builtins
 
     real_import = builtins.__import__
 
     def refuse(name: str, *args: object, **kwargs: object) -> Any:
-        if name == "davey":
-            raise ImportError("no davey here")
+        if name == target:
+            raise error
         return real_import(name, *args, **kwargs)
 
     monkeypatch.setattr(builtins, "__import__", refuse)
 
+
+def test_missing_internals_are_reported_rather_than_raised(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _refuse_import(monkeypatch, "davey", ImportError("no davey here"))
+
     state = upstream.apply_receive_repair()
 
     assert state.applied is False
-    assert "not found" in state.reason
+    assert "voice support unavailable" in state.reason
+
+
+def test_a_voice_import_that_raises_something_other_than_import_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Importing discord.voice raises MissingVoiceDependenciesError, which is not
+    # an ImportError, when a voice dependency will not load. A frozen build is
+    # exactly where that happens, and catching only ImportError took the whole
+    # program down with it.
+    class MissingVoiceDependenciesError(Exception):
+        pass
+
+    _refuse_import(
+        monkeypatch,
+        "discord.voice.packets.core",
+        MissingVoiceDependenciesError("PyNaCl is required for voice support."),
+    )
+
+    state = upstream.apply_receive_repair()
+
+    assert state.applied is False
+    assert "PyNaCl" in state.reason
 
 
 def test_an_unready_session_still_discards() -> None:

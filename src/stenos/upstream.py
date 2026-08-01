@@ -141,13 +141,18 @@ def apply_receive_repair() -> PatchState:
     if _STATE is not None:
         return _STATE
 
+    # Not just ImportError. Importing discord.voice raises
+    # MissingVoiceDependenciesError when a voice dependency will not load,
+    # which is a plain exception rather than an import failure, and a frozen
+    # build is exactly where that happens. Nothing this module can fail at is
+    # worth stopping the program for, so every failure is caught and reported.
     try:
         import davey
         from discord.voice.packets.core import OPUS_SILENCE
         from discord.voice.packets.rtp import RTPPacket
         from discord.voice.receive.reader import PacketDecryptor
-    except ImportError as error:
-        _STATE = PatchState(False, f"py-cord internals not found: {error}")
+    except Exception as error:
+        _STATE = PatchState(False, f"voice support unavailable: {error}")
         return _STATE
 
     try:
