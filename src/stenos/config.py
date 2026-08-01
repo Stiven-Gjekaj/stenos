@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import platform
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -16,6 +17,7 @@ __all__ = [
     "Config",
     "ConfigError",
     "load_config",
+    "resolve_backend",
 ]
 
 BACKEND_MLX = "mlx"
@@ -51,6 +53,35 @@ class Config:
     min_segment: float = DEFAULT_MIN_SEGMENT
     keep_audio: bool = False
     output_dir: Path = field(default=DEFAULT_OUTPUT_DIR)
+
+
+_APPLE_SILICON_MACHINES = frozenset({"arm64", "aarch64"})
+
+
+def resolve_backend(
+    name: str = BACKEND_AUTO,
+    *,
+    system: str | None = None,
+    machine: str | None = None,
+) -> str:
+    """Resolve a backend name to a concrete backend for a given platform.
+
+    The platform is injected rather than read directly so that selection can be
+    asserted for every supported target from a single test runner. mlx runs only
+    on Apple Silicon; every other platform falls back to faster-whisper.
+    """
+    normalised = name.strip().lower().replace("_", "-")
+    if normalised not in VALID_BACKENDS:
+        supported = ", ".join(sorted(VALID_BACKENDS))
+        raise ConfigError(f"Unknown transcription backend {name!r}. Supported: {supported}.")
+    if normalised != BACKEND_AUTO:
+        return normalised
+
+    system = platform.system() if system is None else system
+    machine = platform.machine() if machine is None else machine
+    if system == "Darwin" and machine.lower() in _APPLE_SILICON_MACHINES:
+        return BACKEND_MLX
+    return BACKEND_FASTER_WHISPER
 
 
 def _lookup(env: Mapping[str, str], key: str) -> str | None:
