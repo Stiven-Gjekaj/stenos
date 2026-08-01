@@ -18,13 +18,32 @@ from .audio import segment_to_audio
 from .sink import Segment
 
 __all__ = [
+    "MLX_MODEL_REPOS",
     "BackendUnavailableError",
+    "MLXBackend",
     "MockBackend",
     "ProgressCallback",
     "TranscribedSegment",
     "TranscriptionBackend",
+    "mlx_repo_for",
     "transcribe_segments",
 ]
+
+#: Hugging Face repositories holding the converted weights for each model size.
+#: The names are not uniformly suffixed upstream, so the mapping is explicit
+#: rather than derived from the model name.
+MLX_MODEL_REPOS = {
+    "tiny": "mlx-community/whisper-tiny-mlx",
+    "tiny.en": "mlx-community/whisper-tiny.en-mlx",
+    "base": "mlx-community/whisper-base-mlx",
+    "base.en": "mlx-community/whisper-base.en-mlx",
+    "small": "mlx-community/whisper-small-mlx",
+    "small.en": "mlx-community/whisper-small.en-mlx",
+    "medium": "mlx-community/whisper-medium-mlx-fp32",
+    "medium.en": "mlx-community/whisper-medium.en-mlx-fp32",
+    "large-v3": "mlx-community/whisper-large-v3-mlx",
+    "large-v3-turbo": "mlx-community/whisper-large-v3-turbo",
+}
 
 #: Called with the number of segments completed and the total, after each one.
 ProgressCallback = Callable[[int, int], None]
@@ -85,6 +104,59 @@ class MockBackend:
         if index < len(self.texts):
             return self.texts[index]
         return self.default
+
+
+def mlx_repo_for(model: str) -> str:
+    """Map a model size to its converted repository, passing through explicit paths."""
+    if "/" in model:
+        return model
+    try:
+        return MLX_MODEL_REPOS[model]
+    except KeyError:
+        known = ", ".join(sorted(MLX_MODEL_REPOS))
+        raise BackendUnavailableError(
+            f"No mlx weights are mapped for model {model!r}. "
+            f"Use one of: {known}. A Hugging Face repository path is also accepted."
+        ) from None
+
+
+class MLXBackend:
+    """Apple Silicon backend built on mlx-whisper.
+
+    mlx-whisper caches the loaded model against the repository path, so passing
+    a stable path keeps the weights resident across every segment in a call.
+    """
+
+    name = "mlx"
+
+    def __init__(self, model: str = "small") -> None:
+        self.model = model
+        self.repo = mlx_repo_for(model)
+        self._transcribe = _load_mlx_whisper()
+
+    def transcribe(
+        self,
+        audio: npt.NDArray[np.float32],
+        language: str | None = None,
+    ) -> str:
+        options: dict[str, object] = {"path_or_hf_repo": self.repo}
+        if language is not None:
+            options["language"] = language
+        result = self._transcribe(audio, **options)
+        return str(result.get("text", "")).strip()
+
+
+def _load_mlx_whisper() -> Callable[..., dict[str, object]]:
+    try:
+        import mlx_whisper
+    except ImportError as exc:
+        raise BackendUnavailableError(
+            "The mlx backend requires mlx-whisper, which is not installed. "
+            "Install it with: uv sync --extra mlx. "
+            "mlx runs on Apple Silicon only; use WHISPER_BACKEND=faster-whisper elsewhere."
+        ) from exc
+    transcribe: Callable[..., dict[str, object]] = mlx_whisper.transcribe
+    return transcribe
 
 
 def transcribe_segments(
