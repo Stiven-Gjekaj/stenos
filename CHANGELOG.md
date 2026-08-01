@@ -4,10 +4,55 @@ All notable changes to Stenos are recorded here. The format is based on
 Keep a Changelog (https://keepachangelog.com).
 
 Versions have four components, `X.N.V.M`, described in the versioning section
-of the [README](README.md). A release is cut only on a major, beta, or alpha
-bump, so the sections below skip the commit counter.
+of the [README](README.md). A release covers a whole series: every commit
+sharing an `X.N.V` belongs to it, and the tag is cut at the last of them. The
+sections below are therefore headed by the series rather than by one version.
 
-## 0.1.2.0 (2026-08-01)
+## 0.1.3 (2026-08-01)
+
+### Added
+
+- **A recording that captured nothing now says so, and says why.** An empty
+  transcript reads exactly like a call in which nobody spoke, and the two have
+  very different causes. `/record stop` now inspects the recording before
+  loading a transcription backend and reports which of the two happened rather
+  than writing out a transcript with no lines.
+
+  Two failure states are recognised. A recording that received no packets at
+  all, and a recording that received packets carrying nothing but silence. The
+  second is the more misleading: when a packet cannot be decrypted, py-cord
+  substitutes an opus silence frame instead of reporting the failure, so the
+  recording ends up the right length and entirely empty.
+
+- **The end-to-end encryption state is reported rather than guessed at.**
+  `--check` reports whether the encryption library is present and which
+  protocol version it speaks. `/record status` reports the negotiated session
+  state, but only while no audio has arrived, since packets actually arriving
+  are better evidence than anything the connection reports.
+
+  Discord enforces DAVE on non-Stage voice calls, and py-cord yields received
+  audio only once a session exists and its handshake has completed. Before
+  that, every packet is discarded. Both that and a failed decrypt are logged
+  below the default level, so neither was previously visible.
+
+### Fixed
+
+- **The documented limitation was wrong.** The README claimed py-cord had no
+  receive-side support for DAVE and that recording an encrypted call was
+  therefore not possible. Reading 2.8.1 shows it decrypts received audio, and
+  that `davey` is a dependency of `py-cord[voice]` carried inside the
+  standalone executables. Recording an encrypted call is supported; what was
+  missing was any report when it fails.
+
+### Changed
+
+- **A release now covers an alpha series rather than a single commit.** Every
+  commit sharing an `X.N.V` belongs to one release, the tag is cut at the last
+  of them, and the release is titled by the kind of bump that opened the
+  series, as in `Alpha 0.1.3`. Cutting a second release for a series that
+  already has one is refused.
+
+## 0.1.2 (2026-08-01)
 
 ### Added
 
@@ -79,7 +124,7 @@ bump, so the sections below skip the commit counter.
   noise beside the executables. Install from source with `uv sync` if that is
   what you want, which the README covers.
 
-## 0.1.1.0 (2026-08-01)
+## 0.1.1 (2026-08-01)
 
 ### Fixed
 
@@ -113,7 +158,7 @@ bump, so the sections below skip the commit counter.
   queue limit expired it, which meant the workflow could never report green.
   The platform remains supported; it is no longer verified automatically.
 
-## 0.1.0.0 (2026-08-01)
+## 0.1.0 (2026-08-01)
 
 ### Added
 
