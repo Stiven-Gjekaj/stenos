@@ -17,12 +17,13 @@ import discord
 
 from . import __version__
 from .audio import prepare_segments
-from .config import Config, ConfigError, load_config, resolve_backend
-from .sink import OPUS_PATH_VARIABLE, TimestampedSink, ensure_opus
+from .config import Config, ConfigError, load_config
+from .sink import OPUS_PATH_VARIABLE, TimestampedSink, bundle_directory, ensure_opus
 from .transcribe import (
     BackendUnavailableError,
     ProgressCallback,
     TranscriptionBackend,
+    backend_status,
     load_backend,
     transcribe_segments,
 )
@@ -353,11 +354,13 @@ def build_bot(config: Config) -> StenosBot:
 
 def describe_environment(config: Config) -> str:
     """Report the resolved runtime configuration without connecting to Discord."""
-    resolved = resolve_backend(config.whisper_backend)
+    resolved, available, detail = backend_status(config.whisper_backend)
+    runtime = "frozen executable" if bundle_directory() is not None else "installation"
     lines = [
-        f"stenos {__version__}",
+        f"stenos {__version__} ({runtime})",
         f"python           {platform.python_version()} on {platform.system()} {platform.machine()}",
         f"backend          {config.whisper_backend} resolves to {resolved}",
+        f"backend usable   {available} ({detail})",
         f"model            {config.whisper_model}",
         f"language         {config.language or 'auto'}",
         f"segment gap      {config.segment_gap}s",

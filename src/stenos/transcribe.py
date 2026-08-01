@@ -211,6 +211,27 @@ def _load_faster_whisper() -> Callable[..., Any]:
     return model
 
 
+def backend_status(
+    name: str = BACKEND_AUTO,
+    *,
+    system: str | None = None,
+    machine: str | None = None,
+) -> tuple[str, bool, str]:
+    """Report the resolved backend and whether its dependency can be imported.
+
+    Only the import is attempted, never the model construction, so this stays
+    fast and never downloads weights. Knowing the backend is unusable before a
+    call starts is worth more than discovering it after an hour of recording.
+    """
+    resolved = resolve_backend(name, system=system, machine=machine)
+    loader = _load_mlx_whisper if resolved == BACKEND_MLX else _load_faster_whisper
+    try:
+        loader()
+    except BackendUnavailableError as error:
+        return resolved, False, str(error)
+    return resolved, True, "installed"
+
+
 def load_backend(
     name: str = BACKEND_AUTO,
     model: str = "small",
