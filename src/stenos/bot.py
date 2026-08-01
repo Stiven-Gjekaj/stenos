@@ -18,7 +18,7 @@ import discord
 from . import __version__
 from .audio import prepare_segments
 from .config import Config, ConfigError, load_config, resolve_backend
-from .sink import TimestampedSink
+from .sink import OPUS_PATH_VARIABLE, TimestampedSink, ensure_opus
 from .transcribe import (
     BackendUnavailableError,
     ProgressCallback,
@@ -364,7 +364,7 @@ def describe_environment(config: Config) -> str:
         f"minimum segment  {config.min_segment}s",
         f"output directory {config.output_dir}",
         f"keep audio       {config.keep_audio}",
-        f"opus loaded      {discord.opus.is_loaded()}",
+        f"opus loaded      {ensure_opus()}",
     ]
     return "\n".join(lines)
 
@@ -405,6 +405,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.check:
         print(describe_environment(config))
         return 0
+
+    if not ensure_opus():
+        log.warning(
+            "libopus could not be loaded, so received audio cannot be decoded. "
+            "Install it with brew install opus on macOS or libopus0 on Linux, "
+            "or set %s to its path.",
+            OPUS_PATH_VARIABLE,
+        )
 
     build_bot(config).run(config.discord_token)
     return 0

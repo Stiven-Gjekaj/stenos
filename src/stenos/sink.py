@@ -13,12 +13,15 @@ packets are the silence and no separate voice activity detector is required.
 
 from __future__ import annotations
 
+import os
+import sys
 import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+import discord.opus
 from discord.sinks import Filters, Sink
 
 __all__ = [
@@ -28,6 +31,8 @@ __all__ = [
     "DISCORD_SAMPLE_WIDTH",
     "Segment",
     "TimestampedSink",
+    "ensure_opus",
+    "opus_library_candidates",
 ]
 
 #: Discord decodes received voice to 48 kHz, stereo, signed 16 bit little endian.
@@ -39,6 +44,60 @@ DISCORD_SAMPLE_WIDTH = 2
 BYTES_PER_SECOND = DISCORD_SAMPLE_RATE * DISCORD_CHANNELS * DISCORD_SAMPLE_WIDTH
 
 DEFAULT_SEGMENT_GAP = 0.4
+
+#: Environment variable pointing at libopus when it lives somewhere unusual.
+OPUS_PATH_VARIABLE = "OPUS_LIBRARY_PATH"
+
+
+def opus_library_candidates() -> list[str]:
+    """Locations to try when the default library search does not find libopus.
+
+    py-cord resolves libopus through ctypes.util.find_library on every platform
+    except Windows. On Apple Silicon that search does not cover the Homebrew
+    prefix, so installing the package is not by itself enough to load it.
+    """
+    if sys.platform == "darwin":
+        return [
+            "/opt/homebrew/lib/libopus.0.dylib",
+            "/opt/homebrew/lib/libopus.dylib",
+            "/usr/local/lib/libopus.0.dylib",
+            "/usr/local/lib/libopus.dylib",
+        ]
+    if sys.platform.startswith("linux"):
+        return ["libopus.so.0", "libopus.so"]
+    return []
+
+
+def _try_load(candidate: str) -> bool:
+    try:
+        discord.opus.load_opus(candidate)
+    except Exception:
+        # Any failure means this candidate is unusable; try the next one.
+        return False
+    return bool(discord.opus.is_loaded())
+
+
+def ensure_opus(path: str | None = None) -> bool:
+    """Load libopus, looking beyond the default search path when necessary.
+
+    Returns whether opus is loaded. Voice receive cannot decode audio without
+    it, and the failure appears at runtime rather than at import.
+    """
+    if discord.opus.is_loaded():
+        return True
+
+    explicit = [item for item in (path, os.environ.get(OPUS_PATH_VARIABLE)) if item]
+    for candidate in explicit:
+        if _try_load(candidate):
+            return True
+
+    try:
+        if discord.opus._load_default():
+            return True
+    except Exception:
+        pass
+
+    return any(_try_load(candidate) for candidate in opus_library_candidates())
 
 
 @dataclass(slots=True)

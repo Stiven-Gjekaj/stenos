@@ -14,17 +14,12 @@ from pathlib import Path
 import discord
 import pytest
 
+from stenos.sink import _try_load, ensure_opus, opus_library_candidates
+
 
 def load_opus() -> bool:
-    """Attempt the same load py-cord performs when a voice client is created."""
-    if discord.opus.is_loaded():
-        return True
-    try:
-        discord.opus._load_default()
-    except Exception:
-        # Any failure to load means opus is unavailable on this host.
-        return False
-    return discord.opus.is_loaded()
+    """Load opus the way the package does at startup."""
+    return ensure_opus()
 
 
 def test_opus_module_is_importable() -> None:
@@ -62,3 +57,28 @@ def test_voice_receive_dependencies_are_importable() -> None:
     import nacl.secret
 
     assert nacl.secret.SecretBox is not None
+
+
+def test_candidate_paths_cover_the_homebrew_prefix() -> None:
+    # find_library does not search the Homebrew prefix on Apple Silicon, so
+    # installing the package is not by itself enough to load the library.
+    candidates = opus_library_candidates()
+
+    if sys.platform == "darwin":
+        assert any("/opt/homebrew/lib" in candidate for candidate in candidates)
+        assert any("/usr/local/lib" in candidate for candidate in candidates)
+    elif sys.platform.startswith("linux"):
+        assert "libopus.so.0" in candidates
+    else:
+        assert candidates == []
+
+
+def test_loading_reports_failure_rather_than_raising() -> None:
+    # A missing library must be reported so the caller can print an
+    # instruction instead of a traceback. On a host where opus is already
+    # loaded this returns True from the early exit, which is also correct.
+    assert isinstance(ensure_opus("/nonexistent/libopus.dylib"), bool)
+
+
+def test_an_unusable_candidate_is_rejected_without_raising() -> None:
+    assert _try_load("/nonexistent/libopus.dylib") is False
