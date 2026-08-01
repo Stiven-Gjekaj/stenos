@@ -260,6 +260,15 @@ jobs:
             label="Release"
           fi
           echo "label=$label" >> "$GITHUB_ENV"
+
+          # An alpha is a pre-release. Marking it makes the distinction one
+          # GitHub itself records, so the version badges resolve without anyone
+          # having to remember to tick a box.
+          if [ "$label" = "Alpha" ]; then
+            echo "prerelease=--prerelease" >> "$GITHUB_ENV"
+          else
+            echo "prerelease=" >> "$GITHUB_ENV"
+          fi
           notes="${RUNNER_TEMP}/release-notes.md"
 
           # Each . becomes [.] rather than being escaped with a backslash,
@@ -315,8 +324,9 @@ jobs:
 
           gh release create "$tag" \
             --repo "${GITHUB_REPOSITORY}" \
-            --title "$label $series" \
+            --title "$label v$series" \
             "${body[@]}" \
             --draft \
+            ${prerelease} \
             assets/*
           echo "Draft release created. Review and publish it from the Releases page."
