@@ -15,6 +15,7 @@ import numpy as np
 import numpy.typing as npt
 
 from .audio import segment_to_audio
+from .config import BACKEND_AUTO, BACKEND_MLX, resolve_backend
 from .sink import Segment
 
 __all__ = [
@@ -26,6 +27,7 @@ __all__ = [
     "ProgressCallback",
     "TranscribedSegment",
     "TranscriptionBackend",
+    "load_backend",
     "mlx_repo_for",
     "transcribe_segments",
 ]
@@ -207,6 +209,24 @@ def _load_faster_whisper() -> Callable[..., Any]:
         ) from exc
     model: Callable[..., Any] = WhisperModel
     return model
+
+
+def load_backend(
+    name: str = BACKEND_AUTO,
+    model: str = "small",
+    *,
+    system: str | None = None,
+    machine: str | None = None,
+) -> TranscriptionBackend:
+    """Construct the backend selected for this platform, loading its model once.
+
+    Raises BackendUnavailableError when the resolved backend is not installed,
+    so the caller can surface an instruction instead of an import traceback.
+    """
+    resolved = resolve_backend(name, system=system, machine=machine)
+    if resolved == BACKEND_MLX:
+        return MLXBackend(model)
+    return FasterWhisperBackend(model)
 
 
 def transcribe_segments(
