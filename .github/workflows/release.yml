@@ -229,12 +229,20 @@ jobs:
             echo "No tag given. Reading notes for the packaged version ${version}."
           fi
 
-          # Which component last moved decides what the release is called. A
-          # tag is only ever cut on a major, beta, or alpha bump, so the commit
-          # counter is zero here and the rightmost non-zero component of the
-          # three that remain is the one that changed. See the versioning
-          # section of the README.
-          IFS=. read -r _ beta alpha _ <<< "$version"
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "version '$version' is not X.N.V.M, so the release cannot be named" >&2
+            exit 1
+          fi
+
+          # A release covers an alpha series rather than a single commit: every
+          # commit sharing an X.N.V belongs to it. The series is what the
+          # release is named and what the changelog is keyed on, so the commit
+          # counter is dropped here.
+          series="${version%.*}"
+
+          # Which component last moved decides what the release is called. See
+          # the versioning section of the README.
+          IFS=. read -r _ beta alpha <<< "$series"
           if [ "${alpha:-0}" != "0" ]; then
             label="Alpha"
           elif [ "${beta:-0}" != "0" ]; then
@@ -250,10 +258,10 @@ jobs:
           # replacement. Left as a metacharacter, 0.1.1 would also match a
           # heading ## 0111.
           #
-          # The version has to be followed by a space or the end of the line, so
-          # a release of 0.1.1.0 does not take the 0.1.1.0-rc section.
+          # The series has to be followed by a space or the end of the line, so
+          # a release of 0.1.1 does not take the 0.1.1-rc section.
           if [ -f CHANGELOG.md ]; then
-            awk -v v="$version" '
+            awk -v v="$series" '
               BEGIN { gsub(/\./, "[.]", v); heading = "^## " v "([ \t(]|$)" }
               $0 ~ heading { inside = 1; next }
               inside && /^## / { exit }
@@ -268,12 +276,12 @@ jobs:
           # grep is avoided: it exits 1 when it matches nothing, and set -e
           # would end the job at the point the fallback is meant to run.
           if [ -n "$(tr -d '[:space:]' < "$notes")" ]; then
-            echo "Notes for ${version} read from CHANGELOG.md ($(wc -l < "$notes") lines)."
+            echo "Notes for ${series} read from CHANGELOG.md ($(wc -l < "$notes") lines)."
           else
-            echo "No '## ${version}' section in CHANGELOG.md. Falling back to generated notes."
+            echo "No '## ${series}' section in CHANGELOG.md. Falling back to generated notes."
           fi
           echo "tag=$tag" >> "$GITHUB_ENV"
-          echo "version=$version" >> "$GITHUB_ENV"
+          echo "series=$series" >> "$GITHUB_ENV"
           echo "notes=$notes" >> "$GITHUB_ENV"
 
       # A draft, not a published release. Publishing is a person's decision:
@@ -298,7 +306,7 @@ jobs:
 
           gh release create "$tag" \
             --repo "${GITHUB_REPOSITORY}" \
-            --title "$label $version" \
+            --title "$label $series" \
             "${body[@]}" \
             --draft \
             assets/*

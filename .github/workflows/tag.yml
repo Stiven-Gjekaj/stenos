@@ -1,8 +1,8 @@
 name: tag
 
-# Creates a release tag by hand. Tags are only valid on a major, beta, or
-# alpha bump, and any such bump zeroes every component to its right, so a
-# taggable version always ends in zero.
+# Creates a release tag by hand. A release covers a whole alpha series: every
+# commit sharing an X.N.V belongs to it, and the tag is cut at the last of
+# them, so the commit counter is normally not zero.
 #
 # The tag is pushed with the default GITHUB_TOKEN, which does not start
 # another workflow. release.yml is therefore called directly rather than
@@ -16,7 +16,7 @@ on:
         required: true
         type: string
       force:
-        description: "Allow tagging a commit counter bump"
+        description: "Allow tagging a series that already has a tag"
         required: false
         default: false
         type: boolean
@@ -55,10 +55,15 @@ jobs:
             exit 1
           fi
 
-          counter="${VERSION##*.}"
-          if [ "$counter" != "0" ] && [ "$FORCE" != "true" ]; then
-            echo "refusing to tag $VERSION: only major, beta, and alpha bumps are tagged" >&2
-            echo "a qualifying bump zeroes the commit counter; rerun with force to override" >&2
+          # One release per alpha series. The commit counter is free to be
+          # anything, because the tag is cut at the last commit of the series,
+          # but cutting a second release for a series already tagged would
+          # leave two releases claiming the same version.
+          series="${VERSION%.*}"
+          existing=$(git tag --list "v${series}.*" | head -n1)
+          if [ -n "$existing" ] && [ "$FORCE" != "true" ]; then
+            echo "refusing to tag $VERSION: series $series is already released as $existing" >&2
+            echo "bump the alpha component for a new release, or rerun with force" >&2
             exit 1
           fi
 
