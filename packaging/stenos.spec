@@ -9,12 +9,19 @@
 # and cached, so the executable stays the same size for every model.
 
 import sys
+import tempfile
 from pathlib import Path
 
 from PyInstaller.utils.hooks import collect_dynamic_libs, collect_submodules
 
 ROOT = Path(SPECPATH).parent
 ENTRY = ROOT / "src" / "stenos" / "__main__.py"
+
+#: The one backend this executable carries. Recorded in the bundle so that
+#: an automatic selection resolves to what is actually present: Apple
+#: Silicon would otherwise choose mlx, which is not bundled, and ask for a
+#: backend that cannot be there.
+BUNDLED_BACKEND = "faster-whisper"
 
 #: Where each platform keeps libopus. py-cord bundles a binary for Windows
 #: only, so the other platforms take it from the system at build time.
@@ -57,6 +64,14 @@ def opus_binaries():
     )
 
 
+def backend_marker():
+    """Write the bundled backend name to a file placed at the bundle root."""
+    directory = Path(tempfile.mkdtemp(prefix="stenos-freeze-"))
+    marker = directory / "BUNDLED_BACKEND"
+    marker.write_text(BUNDLED_BACKEND + "\n", encoding="utf-8")
+    return [(str(marker), ".")]
+
+
 binaries = opus_binaries()
 binaries += collect_dynamic_libs("davey")
 binaries += collect_dynamic_libs("ctranslate2")
@@ -71,7 +86,7 @@ analysis = Analysis(
     [str(ENTRY)],
     pathex=[str(ROOT / "src")],
     binaries=binaries,
-    datas=[],
+    datas=backend_marker(),
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},

@@ -19,11 +19,12 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any
 
 import discord.opus
 from discord.sinks import Filters, Sink
+
+from .config import bundle_directory
 
 __all__ = [
     "BYTES_PER_SECOND",
@@ -57,18 +58,6 @@ _OPUS_FILE_NAMES = {
     "win32": ("libopus-0.x64.dll", "libopus-0.x86.dll", "opus.dll"),
     "linux": ("libopus.so.0", "libopus.so"),
 }
-
-
-def bundle_directory() -> Path | None:
-    """Directory holding files bundled into a frozen executable, if frozen.
-
-    A one file build unpacks its payload to a temporary directory recorded in
-    sys._MEIPASS. Returns None when running from a normal installation.
-    """
-    if not getattr(sys, "frozen", False):
-        return None
-    base = getattr(sys, "_MEIPASS", None)
-    return Path(base) if base else None
 
 
 def _platform_key() -> str:

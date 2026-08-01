@@ -33,6 +33,12 @@ bump, so the sections below skip the commit counter.
   Anyone who wants the mlx acceleration should install from source, which the
   README covers.
 
+  A frozen build records which backend it carries and resolves an automatic
+  selection to that, rather than to what the platform would otherwise prefer.
+  Without it an Apple Silicon executable asked for mlx, which it does not
+  bundle, and refused to transcribe anything. An explicit `WHISPER_BACKEND`
+  still wins.
+
 - **`--check` reports whether the backend can actually be used.** It previously
   reported which backend name resolved, which proved only that the name was
   known. It now attempts the import, without constructing a model so that no

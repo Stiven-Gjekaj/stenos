@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import platform
+import sys
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -16,6 +17,8 @@ __all__ = [
     "BACKEND_MLX",
     "Config",
     "ConfigError",
+    "bundle_directory",
+    "bundled_backend",
     "load_config",
     "resolve_backend",
 ]
@@ -57,6 +60,39 @@ class Config:
 
 _APPLE_SILICON_MACHINES = frozenset({"arm64", "aarch64"})
 
+#: Name of the file a frozen build carries to record which backend it bundles.
+BUNDLED_BACKEND_FILE = "BUNDLED_BACKEND"
+
+
+def bundle_directory() -> Path | None:
+    """Directory holding files bundled into a frozen executable, if frozen.
+
+    A one file build unpacks its payload to a temporary directory recorded in
+    sys._MEIPASS. Returns None when running from a normal installation.
+    """
+    if not getattr(sys, "frozen", False):
+        return None
+    base = getattr(sys, "_MEIPASS", None)
+    return Path(base) if base else None
+
+
+def bundled_backend() -> str | None:
+    """Return the backend a frozen build carries, or None if not frozen.
+
+    A frozen build contains exactly one backend, chosen when it was built. That
+    is not necessarily the one this platform would otherwise prefer.
+    """
+    bundle = bundle_directory()
+    if bundle is None:
+        return None
+    try:
+        name = (bundle / BUNDLED_BACKEND_FILE).read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    if name in VALID_BACKENDS and name != BACKEND_AUTO:
+        return name
+    return None
+
 
 def resolve_backend(
     name: str = BACKEND_AUTO,
@@ -69,6 +105,11 @@ def resolve_backend(
     The platform is injected rather than read directly so that selection can be
     asserted for every supported target from a single test runner. mlx runs only
     on Apple Silicon; every other platform falls back to faster-whisper.
+
+    A frozen executable resolves to the backend it actually carries. Apple
+    Silicon would otherwise select mlx, which the executable does not bundle,
+    and ask for a backend that cannot be there. An explicit setting still wins,
+    so anyone who knows better can override it.
     """
     normalised = name.strip().lower().replace("_", "-")
     if normalised not in VALID_BACKENDS:
@@ -76,6 +117,10 @@ def resolve_backend(
         raise ConfigError(f"Unknown transcription backend {name!r}. Supported: {supported}.")
     if normalised != BACKEND_AUTO:
         return normalised
+
+    bundled = bundled_backend()
+    if bundled is not None:
+        return bundled
 
     system = platform.system() if system is None else system
     machine = platform.machine() if machine is None else machine
