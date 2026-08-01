@@ -228,6 +228,21 @@ jobs:
             version=$(grep -m1 '^version = ' pyproject.toml | cut -d'"' -f2)
             echo "No tag given. Reading notes for the packaged version ${version}."
           fi
+
+          # Which component last moved decides what the release is called. A
+          # tag is only ever cut on a major, beta, or alpha bump, so the commit
+          # counter is zero here and the rightmost non-zero component of the
+          # three that remain is the one that changed. See the versioning
+          # section of the README.
+          IFS=. read -r _ beta alpha _ <<< "$version"
+          if [ "${alpha:-0}" != "0" ]; then
+            label="Alpha"
+          elif [ "${beta:-0}" != "0" ]; then
+            label="Beta"
+          else
+            label="Release"
+          fi
+          echo "label=$label" >> "$GITHUB_ENV"
           notes="${RUNNER_TEMP}/release-notes.md"
 
           # Each . becomes [.] rather than being escaped with a backslash,
@@ -258,6 +273,7 @@ jobs:
             echo "No '## ${version}' section in CHANGELOG.md. Falling back to generated notes."
           fi
           echo "tag=$tag" >> "$GITHUB_ENV"
+          echo "version=$version" >> "$GITHUB_ENV"
           echo "notes=$notes" >> "$GITHUB_ENV"
 
       # A draft, not a published release. Publishing is a person's decision:
@@ -282,7 +298,7 @@ jobs:
 
           gh release create "$tag" \
             --repo "${GITHUB_REPOSITORY}" \
-            --title "Stenos $tag" \
+            --title "$label $version" \
             "${body[@]}" \
             --draft \
             assets/*
