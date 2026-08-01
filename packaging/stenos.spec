@@ -78,7 +78,11 @@ binaries += collect_dynamic_libs("ctranslate2")
 binaries += collect_dynamic_libs("onnxruntime")
 binaries += collect_dynamic_libs("av")
 
-hiddenimports = ["davey"]
+# _cffi_backend is imported by PyNaCl's compiled _sodium module from C rather
+# than by any Python import statement, so the freezer's analysis never sees it.
+# Without it PyNaCl fails to import, py-cord reports its voice dependencies as
+# missing, and the executable can join no voice channel at all.
+hiddenimports = ["davey", "_cffi_backend"]
 hiddenimports += collect_submodules("faster_whisper")
 hiddenimports += collect_submodules("ctranslate2")
 
