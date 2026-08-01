@@ -1,11 +1,20 @@
 name: release
 
+# Builds the Python distributions and a standalone executable for each
+# supported platform, then attaches them to a GitHub release.
+#
 # Tags are created only on a major, beta, or alpha version bump, never on the
 # commit counter. See the versioning section of the README.
 #
 # The workflow_call trigger exists because a tag pushed with the default
 # GITHUB_TOKEN does not start another workflow. tag.yml therefore calls this
 # workflow directly instead of relying on the tag event.
+#
+# workflow_dispatch is here so the whole build can be proven without creating a
+# tag. A tag is a public, permanent-looking thing to create by accident, and a
+# release workflow that can only be tested by tagging gets tested in
+# production. On a manual run with no tag the publish step is skipped and the
+# archives are left as workflow artifacts to be downloaded and checked by hand.
 
 on:
   push:
@@ -19,31 +28,21 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Tag to release
-        required: true
+        description: Tag to release, or empty to build without publishing
+        required: false
         type: string
 
 permissions:
   contents: write
 
 jobs:
-  release:
-    name: build and publish
+  distributions:
+    name: wheel and sdist
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
         with:
           ref: ${{ inputs.tag || github.ref }}
-          fetch-depth: 0
-
-      - name: Resolve the tag being released
-        id: tag
-        run: |
-          if [ -n "${{ inputs.tag }}" ]; then
-            echo "name=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "name=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
-          fi
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
@@ -52,42 +51,224 @@ jobs:
           cache-dependency-glob: uv.lock
 
       - name: Verify the tag matches the packaged version
+        if: inputs.tag || startsWith(github.ref, 'refs/tags/v')
         run: |
-          tag="${{ steps.tag.outputs.name }}"
+          set -euo pipefail
+          tag="${{ inputs.tag }}"
+          [ -n "$tag" ] || tag="${GITHUB_REF#refs/tags/}"
           packaged=$(grep -m1 '^version = ' pyproject.toml | cut -d'"' -f2)
           if [ "$tag" != "v$packaged" ]; then
             echo "tag $tag does not match pyproject version $packaged" >&2
             exit 1
           fi
 
-      - name: Build distributions
+      - name: Build
         run: uv build
 
-      - name: Generate release notes from commit subjects
-        run: |
-          tag="${{ steps.tag.outputs.name }}"
-          previous=$(git tag --sort=-version:refname | grep -v "^${tag}$" | head -n1 || true)
-          {
-            echo "## Changes"
-            echo
-            if [ -n "$previous" ]; then
-              git log --no-merges --format='- %s' "${previous}..${tag}"
-            else
-              git log --no-merges --format='- %s' "${tag}"
-            fi
-            echo
-            if [ -n "$previous" ]; then
-              echo "**Full changelog**: https://github.com/${{ github.repository }}/compare/${previous}...${tag}"
-            fi
-          } > release-notes.md
-          cat release-notes.md
-
-      - name: Create the release
-        uses: softprops/action-gh-release@v2
+      - name: Upload
+        uses: actions/upload-artifact@v4
         with:
-          tag_name: ${{ steps.tag.outputs.name }}
-          name: ${{ steps.tag.outputs.name }}
-          body_path: release-notes.md
-          files: |
-            dist/*.whl
-            dist/*.tar.gz
+          name: distributions
+          path: dist/*
+          if-no-files-found: error
+
+  executables:
+    name: executable ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # One platform failing should not hide whether the others work. On a real
+      # release every platform has to succeed anyway, and knowing which ones
+      # broke is worth more than stopping early.
+      fail-fast: false
+      matrix:
+        include:
+          # A runner of the target's own architecture in every case. A freezer
+          # cannot cross-build: it packages the interpreter and the compiled
+          # extension modules of the machine it runs on.
+          #
+          # Intel macOS is absent for that reason combined with GitHub having
+          # withdrawn its Intel runners. There is no honest way to produce that
+          # executable here, so it is not claimed.
+          - target: linux-x86_64
+            os: ubuntu-latest
+          - target: linux-arm64
+            os: ubuntu-24.04-arm
+          - target: macos-arm64
+            os: macos-latest
+          - target: windows-x86_64
+            os: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - name: Install libopus on Linux
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libopus0 libsodium23
+
+      - name: Install libopus on macOS
+        if: runner.os == 'macOS'
+        run: brew install opus
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+          python-version: "3.12"
+
+      - name: Install the project and the freezer
+        # The executable carries a transcription backend, without which it
+        # could join a call but never transcribe it.
+        run: uv sync --extra cuda --group freeze
+
+      - name: Freeze
+        run: uv run pyinstaller packaging/stenos.spec --noconfirm
+
+      - name: Package
+        shell: bash
+        run: |
+          set -euo pipefail
+          name="stenos-${{ matrix.target }}"
+          mkdir -p "package/$name"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            cp dist/stenos.exe "package/$name/"
+          else
+            cp dist/stenos "package/$name/"
+            chmod +x "package/$name/stenos"
+          fi
+          cp README.md LICENSE "package/$name/"
+          cp .env.example "package/$name/"
+          (cd package && zip -qr "$name.zip" "$name")
+          ls -la package
+
+      # The executable is checked here rather than only at the end, so a broken
+      # build is reported by the job that made it. --check exercises the parts
+      # a freeze most often breaks: it loads libopus from the bundle and
+      # imports the transcription backend.
+      - name: Check the executable runs
+        shell: bash
+        env:
+          DISCORD_TOKEN: smoke-test
+        run: |
+          set -euo pipefail
+          binary="dist/stenos"
+          [ "$RUNNER_OS" = "Windows" ] && binary="dist/stenos.exe"
+          "$binary" --version
+          "$binary" --help > /dev/null
+          report=$("$binary" --check)
+          echo "$report"
+          echo "$report" | grep -q "opus loaded      True" \
+            || { echo "the executable cannot load libopus" >&2; exit 1; }
+          echo "$report" | grep -q "backend usable   True" \
+            || { echo "the executable cannot import its transcription backend" >&2; exit 1; }
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: stenos-${{ matrix.target }}
+          path: package/*.zip
+          if-no-files-found: error
+
+  publish:
+    name: publish the release
+    needs: [distributions, executables]
+    runs-on: ubuntu-latest
+    # Only a tag publishes. A manual run with no tag stops here, having proven
+    # every platform builds and runs, and leaves the archives as artifacts.
+    if: inputs.tag || startsWith(github.ref, 'refs/tags/v')
+    steps:
+      # Before the download, not after. actions/checkout defaults to
+      # clean: true, which runs git clean over the workspace and would delete
+      # the archives if they were already there.
+      #
+      # This job builds nothing. It checks out for two reasons: the release
+      # notes are read from CHANGELOG.md, and the installers are attached from
+      # scripts/, and both must be the versions that release ships.
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - name: Collect the archives
+        uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+
+      - name: Gather the installers
+        run: |
+          set -euo pipefail
+          cp scripts/install.sh scripts/install.ps1 assets/
+          ls -la assets
+
+      # One file for all of them, so a user checks a download against a single
+      # list rather than hunting for a per-file hash.
+      - name: Write the checksums
+        run: |
+          set -euo pipefail
+          cd assets
+          sha256sum * > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Read the release notes
+        run: |
+          set -euo pipefail
+          tag="${{ inputs.tag }}"
+          [ -n "$tag" ] || tag="${GITHUB_REF#refs/tags/}"
+          version="${tag#v}"
+          notes="${RUNNER_TEMP}/release-notes.md"
+
+          # Each . becomes [.] rather than being escaped with a backslash,
+          # because awk implementations disagree about a backslash in a gsub
+          # replacement. Left as a metacharacter, 0.1.1 would also match a
+          # heading ## 0111.
+          #
+          # The version has to be followed by a space or the end of the line, so
+          # a release of 0.1.1.0 does not take the 0.1.1.0-rc section.
+          if [ -f CHANGELOG.md ]; then
+            awk -v v="$version" '
+              BEGIN { gsub(/\./, "[.]", v); heading = "^## " v "([ \t(]|$)" }
+              $0 ~ heading { inside = 1; next }
+              inside && /^## / { exit }
+              inside { print }
+            ' CHANGELOG.md > "$notes"
+          else
+            : > "$notes"
+          fi
+
+          # A heading with nothing under it is worth no more than no heading, so
+          # this asks for content rather than for a file with bytes in it.
+          # grep is avoided: it exits 1 when it matches nothing, and set -e
+          # would end the job at the point the fallback is meant to run.
+          if [ -n "$(tr -d '[:space:]' < "$notes")" ]; then
+            echo "Notes for ${version} read from CHANGELOG.md ($(wc -l < "$notes") lines)."
+          else
+            echo "No '## ${version}' section in CHANGELOG.md. Falling back to generated notes."
+          fi
+          echo "tag=$tag" >> "$GITHUB_ENV"
+          echo "notes=$notes" >> "$GITHUB_ENV"
+
+      # A draft, not a published release. Publishing is a person's decision:
+      # the notes are worth reading before anyone can download them, and a draft
+      # can be deleted without leaving a version that the world briefly saw.
+      # Publish from the Releases page when it looks right.
+      - name: Create the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [ -n "$(tr -d '[:space:]' < "$notes")" ]; then
+            body=(--notes-file "$notes")
+          else
+            body=(--generate-notes)
+          fi
+
+          gh release create "$tag" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "Stenos $tag" \
+            "${body[@]}" \
+            --draft \
+            assets/*
+          echo "Draft release created. Review and publish it from the Releases page."
