@@ -53,6 +53,18 @@ sections below are therefore headed by the series rather than by one version.
 
 ### Fixed
 
+- **The standalone executables could join no voice channel.** PyNaCl's compiled
+  module imports `_cffi_backend` from C rather than through any Python
+  statement, so the freezer never saw it and left it out of the bundle. Without
+  it PyNaCl does not import and py-cord reports its voice dependencies as
+  missing, which meant every executable released so far could start, report
+  `opus loaded True`, and then fail the moment it was asked to connect.
+
+  This affects the `v0.1.2.0` executables, which should not be used. The
+  release smoke test now checks voice support alongside opus and the
+  transcription backend, so a freeze that loses a hidden import is caught by
+  the job that built it.
+
 - **The documented limitation was wrong.** The README claimed py-cord had no
   receive-side support for DAVE and that recording an encrypted call was
   therefore not possible. Reading 2.8.1 shows it decrypts received audio, and
