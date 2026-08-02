@@ -42,6 +42,7 @@ from .upstream import (
     quieten_rtcp_reports,
     quieten_stale_receive_warning,
     receive_repair_state,
+    recover_decoded_audio,
     skipped_frames,
     tolerate_double_stop,
     tolerate_undecodable_frames,
@@ -522,6 +523,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     # would otherwise produce a recording of silence. Applied only when that is
     # what the installed version actually does.
     apply_receive_repair()
+
+    # Before the tolerance below, which wraps the method this replaces. The
+    # other order would wrap the version being replaced, and the tolerance
+    # would go with it.
+    recover_decoded_audio()
 
     # With reception repaired, what py-cord says about reception is out of date,
     # and the traceback its router prints at the end of a working recording

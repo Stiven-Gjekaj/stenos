@@ -36,6 +36,14 @@ version numbers. A py-cord that returns the payload intact is left alone, so
 these become inert the moment the defects are fixed upstream rather than needing
 to be noticed and removed.
 
+A third defect sits after the decoder rather than before it. ``_decode_packet``
+turns the payload into linear audio and then hands that audio to
+``dave.decrypt`` whenever the session reports the speaker as passthrough, which
+is a second decryption of something that stopped being ciphertext two steps
+earlier. It either corrupts the audio or raises inside the router thread, which
+ends the recording. Passthrough follows a DAVE downgrade, reset, or transition
+recovery, so in practice it follows somebody joining or leaving the channel.
+
 Three smaller things live here for the same reason. A packet that will not
 decode is skipped rather than allowed to end the recording. The router thread is
 stopped from reporting its own stop as an error. And py-cord is stopped from
@@ -58,6 +66,7 @@ __all__ = [
     "quieten_rtcp_reports",
     "quieten_stale_receive_warning",
     "receive_repair_state",
+    "recover_decoded_audio",
     "skipped_frames",
     "tolerate_double_stop",
     "tolerate_undecodable_frames",
@@ -351,21 +360,29 @@ def skipped_frames() -> int:
 def tolerate_undecodable_frames() -> bool:
     """Let a packet that will not decode be skipped rather than end the recording.
 
-    py-cord lets an opus decode failure out of the router thread, which stops
-    that thread, which stops the recording. One malformed frame therefore
-    discards every second of audio that would have followed it.
+    py-cord lets a decode failure out of the router thread, which stops that
+    thread, which stops the recording. One malformed frame therefore discards
+    every second of audio that would have followed it.
 
     A frame that will not decode is a fragment of one utterance. Losing it
     costs a syllable. Losing the rest of the call costs the recording, so the
     failure is confined to the packet that caused it and counted, and the
     reason a transcript has gaps stays visible.
+
+    Every exception is caught, not only the one opus raises. What ends a
+    recording is the thread dying, and the thread does not care which exception
+    killed it. The type is named in the log so the cause stays legible.
+
+    Must be applied after recover_decoded_audio, which replaces the method this
+    wraps. Applied first, it would wrap the version being replaced and its
+    tolerance would be discarded along with it.
     """
     global _decode_patched
     if _decode_patched:
         return True
 
     try:
-        from discord.opus import OpusError, PacketDecoder
+        from discord.opus import PacketDecoder
     except Exception as error:
         log.debug("Cannot make decoding tolerant: %s", error)
         return False
@@ -376,12 +393,13 @@ def tolerate_undecodable_frames() -> bool:
         global _skipped
         try:
             return original(self, packet)
-        except OpusError as error:
+        except Exception as error:
             _skipped += 1
             if _skipped == 1:
                 log.warning(
-                    "A packet would not decode (%s). Skipping it and any others "
-                    "like it, rather than ending the recording.",
+                    "A packet would not decode (%s: %s). Skipping it and any "
+                    "others like it, rather than ending the recording.",
+                    error.__class__.__name__,
                     error,
                 )
             # An empty payload, which the sink reads as nothing to record.
@@ -477,4 +495,138 @@ def quieten_rtcp_reports() -> bool:
     logger = logging.getLogger("discord.voice.receive.reader")
     if not any(isinstance(item, _SenderReports) for item in logger.filters):
         logger.addFilter(_SenderReports())
+    return True
+
+
+#: What the probe's decoder returns, standing in for decoded audio.
+_PROBE_PCM = b"\x00\x01" * 480
+
+_decode_replaced = False
+
+
+class _ProbeOpusDecoder:
+    """A decoder that returns known audio without needing libopus."""
+
+    def decode(self, data: Any, *, fec: bool = False) -> bytes:
+        return _PROBE_PCM
+
+
+class _ProbeBuffer:
+    """A jitter buffer holding nothing, so the probe takes the plain path."""
+
+    def peek_next(self) -> Any:
+        return None
+
+
+class _PassthroughSession:
+    """A session reporting every user as passthrough, recording what it decrypts."""
+
+    ready = True
+
+    def __init__(self) -> None:
+        self.decrypted: list[Any] = []
+
+    def can_passthrough(self, user_id: int) -> bool:
+        return True
+
+    def decrypt(self, user_id: int, media_type: Any, payload: Any) -> Any:
+        self.decrypted.append(payload)
+        return payload
+
+
+class _ProbePacket:
+    """A packet carrying a payload, truthy so the plain decode path is taken."""
+
+    decrypted_data = b"opus"
+    sequence = 7
+    timestamp = 96000
+
+
+def _decodes_without_decrypting(decoder_type: Any) -> bool:
+    """Whether decoding leaves the audio alone rather than decrypting it again.
+
+    The decoder is built without its ``__init__`` so the probe needs neither
+    libopus nor a real jitter buffer, and its parts are supplied directly. What
+    is being asked is only whether the session is reached at all.
+    """
+    session = _PassthroughSession()
+    sink = type(
+        "Sink",
+        (),
+        {
+            "is_opus": lambda self: False,
+            "client": type(
+                "Client", (), {"_connection": type("C", (), {"dave_session": session})()}
+            )(),
+        },
+    )()
+
+    decoder = decoder_type.__new__(decoder_type)
+    decoder.router = type("Router", (), {"sink": sink})()
+    decoder.ssrc = _PROBE_SSRC
+    decoder._decoder = _ProbeOpusDecoder()
+    decoder._buffer = _ProbeBuffer()
+    decoder._cached_id = 4242
+    decoder._last_seq = -1
+    decoder._last_ts = -1
+
+    decoder._decode_packet(_ProbePacket())
+    return not session.decrypted
+
+
+def _build_decode_replacement() -> Any:
+    """py-cord's decoding with the second decryption of the audio removed."""
+
+    def _decode_packet(self: Any, packet: Any) -> Any:
+        if packet:
+            return packet, self._decoder.decode(packet.decrypted_data, fec=False)
+
+        # A placeholder standing in for a packet that never arrived. The one
+        # after it conceals the gap when it carries forward error correction,
+        # and otherwise the decoder is asked to invent the interval itself.
+        following = self._buffer.peek_next()
+        if following is not None:
+            return packet, self._decoder.decode(following.decrypted_data, fec=True)
+        return packet, self._decoder.decode(None, fec=False)
+
+    return _decode_packet
+
+
+def recover_decoded_audio() -> bool:
+    """Stop the audio being handed back to the session after it was decoded.
+
+    ``_decode_packet`` turns the payload into linear audio and then, when the
+    session reports the speaker as passthrough, gives that audio to
+    ``dave.decrypt``. The payload was decrypted in ``decrypt_rtp`` before it was
+    ever decoded, so this is a second decryption of something that is no longer
+    ciphertext. It either corrupts the audio or raises, and it raises inside the
+    router thread, which ends the recording.
+
+    Passthrough is not the rare state it sounds like. py-cord turns it on from
+    three places, on a DAVE downgrade, a session reset, and a transition
+    recovery, all of which follow somebody joining or leaving the channel.
+
+    Decided by running the decoder rather than by comparing versions, like every
+    other repair here, so it retires itself once upstream removes the call.
+    """
+    global _decode_replaced
+    if _decode_replaced:
+        return True
+
+    try:
+        from discord.opus import PacketDecoder
+    except Exception as error:
+        log.debug("Cannot check how audio is decoded: %s", error)
+        return False
+
+    try:
+        if _decodes_without_decrypting(PacketDecoder):
+            return False
+    except Exception as error:
+        log.debug("Could not probe the decoder, so leaving it alone: %s", error)
+        return False
+
+    PacketDecoder._decode_packet = _build_decode_replacement()  # type: ignore[method-assign]
+    _decode_replaced = True
+    log.info("Repaired py-cord decoding, which decrypted audio it had already decoded.")
     return True

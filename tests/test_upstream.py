@@ -14,6 +14,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from discord.opus import PacketDecoder
 from discord.voice.packets.core import OPUS_SILENCE
 from discord.voice.packets.rtp import RTPPacket
 from discord.voice.receive.reader import PacketDecryptor
@@ -24,16 +25,21 @@ from stenos import upstream
 _STOCK_DECRYPT_RTP = PacketDecryptor.decrypt_rtp
 _STOCK_RTPSIZE = PacketDecryptor._decrypt_rtp_aead_xchacha20_poly1305_rtpsize
 _STOCK_RUN = PacketRouter.run
+_STOCK_DECODE = PacketDecoder._decode_packet
 
 
 def _restore_stock_pycord() -> None:
     upstream._STATE = None
     upstream._stop_patched = False
+    upstream._decode_replaced = False
+    upstream._decode_patched = False
+    upstream._skipped = 0
     PacketDecryptor.decrypt_rtp = _STOCK_DECRYPT_RTP  # type: ignore[method-assign]
     PacketDecryptor._decrypt_rtp_aead_xchacha20_poly1305_rtpsize = (  # type: ignore[method-assign]
         _STOCK_RTPSIZE
     )
     PacketRouter.run = _STOCK_RUN  # type: ignore[method-assign]
+    PacketDecoder._decode_packet = _STOCK_DECODE  # type: ignore[method-assign]
 
 
 @pytest.fixture(autouse=True)
@@ -461,3 +467,152 @@ def test_the_filter_is_attached_to_the_reader_that_emits_it() -> None:
         assert isinstance(added[0], upstream._SenderReports)
     finally:
         logger.filters = before
+
+
+# Decoding. py-cord hands the decoded audio back to the session whenever it
+# reports the speaker as passthrough, which is a second decryption of something
+# that stopped being ciphertext in decrypt_rtp.
+
+
+class Decoder:
+    """An opus decoder that records its calls and needs no libopus."""
+
+    def __init__(self, pcm: bytes = b"pcm") -> None:
+        self.pcm = pcm
+        self.calls: list[tuple[Any, bool]] = []
+
+    def decode(self, data: Any, *, fec: bool = False) -> bytes:
+        self.calls.append((data, fec))
+        return self.pcm
+
+
+class Lost:
+    """The placeholder py-cord puts in for a packet that never arrived."""
+
+    def __bool__(self) -> bool:
+        return False
+
+
+def _decoder(buffer: Any, pcm: bytes = b"pcm") -> Any:
+    """A PacketDecoder assembled without its __init__, which would need libopus."""
+    decoder = PacketDecoder.__new__(PacketDecoder)
+    decoder._decoder = Decoder(pcm)
+    decoder._buffer = buffer
+    return decoder
+
+
+class NoSuccessor:
+    def peek_next(self) -> Any:
+        return None
+
+
+class Successor:
+    def peek_next(self) -> Any:
+        return SimpleNamespace(decrypted_data=b"the next payload")
+
+
+def test_stock_pycord_still_decrypts_audio_it_has_already_decoded() -> None:
+    # The third tripwire. When a future version stops handing decoded audio back
+    # to the session, this fails and the repair should be removed with it.
+    assert upstream._decodes_without_decrypting(PacketDecoder) is False, (
+        "py-cord no longer decrypts audio it has already decoded. "
+        "The repair in stenos/upstream.py is obsolete and should be removed."
+    )
+
+
+def test_the_repair_stops_the_audio_being_decrypted_again() -> None:
+    assert upstream.recover_decoded_audio() is True
+    assert upstream._decodes_without_decrypting(PacketDecoder) is True
+
+
+def test_a_pycord_that_decodes_cleanly_is_left_alone() -> None:
+    def clean(self: Any, packet: Any) -> Any:
+        return packet, self._decoder.decode(packet.decrypted_data, fec=False)
+
+    PacketDecoder._decode_packet = clean  # type: ignore[method-assign]
+
+    assert upstream.recover_decoded_audio() is False
+    assert PacketDecoder._decode_packet is clean
+
+
+def test_a_decoder_probe_that_raises_leaves_pycord_alone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def explode(*args: object, **kwargs: object) -> bool:
+        raise RuntimeError("unfamiliar decoder")
+
+    monkeypatch.setattr(upstream, "_decodes_without_decrypting", explode)
+
+    assert upstream.recover_decoded_audio() is False
+    assert PacketDecoder._decode_packet is _STOCK_DECODE
+
+
+def test_replacing_the_decoder_happens_once() -> None:
+    assert upstream.recover_decoded_audio() is True
+    replaced = PacketDecoder._decode_packet
+
+    assert upstream.recover_decoded_audio() is True
+    assert PacketDecoder._decode_packet is replaced
+
+
+def test_a_packet_that_arrived_is_decoded_as_it_is() -> None:
+    upstream.recover_decoded_audio()
+    decoder = _decoder(NoSuccessor())
+
+    _, pcm = decoder._decode_packet(SimpleNamespace(decrypted_data=b"opus"))
+
+    assert pcm == b"pcm"
+    assert decoder._decoder.calls == [(b"opus", False)]
+
+
+def test_a_lost_packet_is_concealed_from_the_one_after_it() -> None:
+    # py-cord's own behaviour, kept. The successor carries forward error
+    # correction for the interval that went missing.
+    upstream.recover_decoded_audio()
+    decoder = _decoder(Successor())
+
+    decoder._decode_packet(Lost())
+
+    assert decoder._decoder.calls == [(b"the next payload", True)]
+
+
+def test_a_lost_packet_with_nothing_after_it_is_invented_by_the_decoder() -> None:
+    upstream.recover_decoded_audio()
+    decoder = _decoder(NoSuccessor())
+
+    decoder._decode_packet(Lost())
+
+    assert decoder._decoder.calls == [(None, False)]
+
+
+def test_a_failure_that_is_not_an_opus_error_is_still_skipped() -> None:
+    # What ends a recording is the router thread dying, and the thread does not
+    # care which exception killed it. The one this exists for is raised by the
+    # session, not by opus.
+    def explode(self: Any, packet: Any) -> Any:
+        raise ValueError("Failed to decrypt: NoDecryptorForUser")
+
+    PacketDecoder._decode_packet = explode  # type: ignore[method-assign]
+    assert upstream.tolerate_undecodable_frames() is True
+
+    _, pcm = PacketDecoder._decode_packet(_decoder(NoSuccessor()), object())
+
+    assert pcm == b""
+    assert upstream.skipped_frames() == 1
+
+
+def test_tolerance_applied_after_the_replacement_covers_it() -> None:
+    # The ordering the two depend on. Applied the other way round, the tolerance
+    # would wrap the method being replaced and go with it.
+    upstream.recover_decoded_audio()
+    upstream.tolerate_undecodable_frames()
+
+    decoder = _decoder(NoSuccessor())
+    decoder._decoder.decode = lambda data, *, fec=False: (_ for _ in ()).throw(  # type: ignore[method-assign]
+        ValueError("libopus said no")
+    )
+
+    _, pcm = decoder._decode_packet(SimpleNamespace(decrypted_data=b"opus"))
+
+    assert pcm == b""
+    assert upstream.skipped_frames() == 1
