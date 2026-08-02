@@ -56,3 +56,19 @@ jobs:
 
       - name: Confirm the default suite still passes on this platform
         run: uv run pytest -q
+
+      # The documented install for the machine this project targets, and the
+      # one nothing else exercises. It resolved to a numba from 2021 that no
+      # supported Python can build, and stayed that way because every other job
+      # installs a different extra. Run on every Python the project claims, so
+      # a resolution that works on one and not another is caught here.
+      - name: Install the Apple Silicon extra
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          for version in 3.11 3.12 3.13; do
+            echo "::group::python $version"
+            uv sync --extra mlx --python "$version"
+            uv run --python "$version" python -c 'import mlx_whisper, numba, numpy; print("numba", numba.__version__, "numpy", numpy.__version__)'
+            echo "::endgroup::"
+          done
