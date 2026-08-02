@@ -167,6 +167,18 @@ jobs:
             echo "$report" | grep "receive repair" >&2
             exit 1
           fi
+          # The certificate list has to come from inside the bundle. The paths
+          # compiled into a frozen ssl module are those of this runner, which
+          # exist here and nowhere else, so a build that falls back to them
+          # passes every check made on the machine that built it and then fails
+          # the TLS handshake on a user's. _MEI is the unpacked bundle.
+          certs=$(echo "$report" | sed -n 's/^certificates *//p')
+          echo "certificate list: $certs"
+          case "$certs" in
+            *_MEI*) ;;
+            *) echo "the executable has no bundled certificates, so logging in would fail on any other machine" >&2
+               exit 1 ;;
+          esac
 
       - name: Upload
         uses: actions/upload-artifact@v7
