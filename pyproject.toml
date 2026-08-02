@@ -1,6 +1,6 @@
 [project]
 name = "stenos"
-version = "0.1.4.7"
+version = "0.1.4.8"
 description = "Discord voice recorder producing timestamped, speaker-attributed transcripts with local inference"
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
@@ -30,7 +30,16 @@ dependencies = [
 stenos = "stenos.bot:main"
 
 [project.optional-dependencies]
-mlx = ["mlx-whisper>=0.4"]
+mlx = [
+    "mlx-whisper>=0.4",
+    # mlx-whisper pulls in numba, which caps numpy. Left to itself the resolver
+    # searches for a numba that accepts an uncapped numpy, finds none, and
+    # settles on one from 2021 that no supported Python can even build. Holding
+    # numpy under the cap keeps a current numba in reach. The bound belongs to
+    # this extra rather than to the project, because nothing else needs it.
+    "numba>=0.61",
+    "numpy<2.5",
+]
 cuda = ["faster-whisper>=1.1"]
 
 [project.urls]
