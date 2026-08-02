@@ -18,15 +18,22 @@ from discord.voice.receive.reader import PacketDecryptor
 from stenos import upstream
 
 _STOCK_DECRYPT_RTP = PacketDecryptor.decrypt_rtp
+_STOCK_RTPSIZE = PacketDecryptor._decrypt_rtp_aead_xchacha20_poly1305_rtpsize
+
+
+def _restore_stock_pycord() -> None:
+    upstream._STATE = None
+    PacketDecryptor.decrypt_rtp = _STOCK_DECRYPT_RTP  # type: ignore[method-assign]
+    PacketDecryptor._decrypt_rtp_aead_xchacha20_poly1305_rtpsize = (  # type: ignore[method-assign]
+        _STOCK_RTPSIZE
+    )
 
 
 @pytest.fixture(autouse=True)
 def stock_pycord() -> Iterator[None]:
-    upstream._STATE = None
-    PacketDecryptor.decrypt_rtp = _STOCK_DECRYPT_RTP  # type: ignore[method-assign]
+    _restore_stock_pycord()
     yield
-    upstream._STATE = None
-    PacketDecryptor.decrypt_rtp = _STOCK_DECRYPT_RTP  # type: ignore[method-assign]
+    _restore_stock_pycord()
 
 
 def _decrypt(connection: Any) -> Any:
@@ -39,6 +46,34 @@ def _decrypt(connection: Any) -> Any:
     return decryptor.decrypt_rtp(upstream._probe_packet(RTPPacket))
 
 
+def _decrypt_rtpsize(connection: Any, words: int) -> Any:
+    """Run one rtpsize packet carrying ``words`` extension words through it.
+
+    Discord writes two, which is the one count py-cord's constant happens to
+    match, so anything checking only that would call a broken decryptor sound.
+    """
+
+    class Client:
+        _connection = connection
+
+    decryptor = PacketDecryptor("aead_xchacha20_poly1305_rtpsize", upstream._PROBE_KEY, Client())
+    return decryptor.decrypt_rtp(upstream._rtpsize_packet(RTPPacket, words))
+
+
+def _leaves_the_extension(self: Any, packet: Any) -> bytes:
+    """An rtpsize decryptor of the shape py-cord's decrypt_rtp is written for.
+
+    It returns the extension along with the payload, leaving the single removal
+    to the caller, which is the arrangement that needs no repair at all.
+    """
+    packet.adjust_rtpsize()
+    return self.box.decrypt(
+        packet.decrypted_data or packet.data,
+        bytes(packet.header),
+        packet.nonce + bytes(20),
+    )
+
+
 class Connection:
     """A voice connection carrying the given encryption session."""
 
@@ -49,6 +84,26 @@ class Connection:
     @property
     def ssrc_user_map(self) -> dict[int, int]:
         return {upstream._PROBE_SSRC: 4242}
+
+
+#: What a session hands back, long enough that losing eight bytes off the front
+#: is visible rather than emptying it.
+_DAVE_OUTPUT = b"OPUSFRAME" + bytes(range(40))
+
+
+class _Dave:
+    """A session that returns audio for the payload, and refuses anything else.
+
+    Refusing rather than asserting is what a real one does, and it is what makes
+    py-cord substitute silence, which is half of what a stock recording contains.
+    """
+
+    ready = True
+
+    def decrypt(self, user_id: int, media: object, payload: bytes) -> bytes:
+        if payload != upstream._PROBE_PAYLOAD:
+            raise ValueError("Failed to decrypt: NoDecryptorForUser")
+        return _DAVE_OUTPUT
 
 
 def _require_repair() -> None:
@@ -71,6 +126,72 @@ def test_stock_pycord_still_discards_unencrypted_audio() -> None:
         "py-cord now returns received audio without a session. "
         "The repair in stenos/upstream.py is obsolete and should be removed."
     )
+
+
+def test_stock_pycord_still_mishandles_the_packet_extension() -> None:
+    # The second tripwire. py-cord computes the offset the extension occupies,
+    # discards it, and removes a constant eight bytes, then removes it a second
+    # time after DAVE hands back the audio. When a future version fixes this,
+    # the repair in stenos/upstream.py should be removed with it.
+    assert upstream._extension_handling(PacketDecryptor, RTPPacket) == "wrong", (
+        "py-cord now handles the packet extension correctly. "
+        "The repair in stenos/upstream.py is obsolete and should be removed."
+    )
+
+
+def test_stock_pycord_delivers_no_audio_at_any_extension_size() -> None:
+    # Why a recording made against a stock 2.8.1 is silence interrupted by
+    # decode failures. Two extension words survive DAVE and then lose the first
+    # eight bytes of opus, which the decoder rejects. Every other size loses the
+    # wrong bytes before DAVE sees them, so the packet becomes opus silence.
+    delivered = {
+        words: _decrypt_rtpsize(Connection(_Dave()), words) == _DAVE_OUTPUT
+        for words in upstream._PROBE_EXTENSION_WORDS
+    }
+
+    assert not any(delivered.values()), delivered
+    assert _decrypt_rtpsize(Connection(_Dave()), 2) == _DAVE_OUTPUT[8:]
+
+
+def test_the_repair_delivers_audio_at_every_extension_size() -> None:
+    _require_repair()
+
+    upstream.apply_receive_repair()
+
+    for words in upstream._PROBE_EXTENSION_WORDS:
+        assert _decrypt_rtpsize(Connection(_Dave()), words) == _DAVE_OUTPUT, (
+            f"audio was lost on a packet carrying {words} extension words"
+        )
+
+
+def test_a_pycord_that_leaves_the_extension_keeps_the_single_removal() -> None:
+    # The removal in decrypt_rtp is only a second removal because the transport
+    # decryption already did it. Against one that does not, it is the first, and
+    # taking it away would hand the extension to the decoder as if it were audio.
+    PacketDecryptor._decrypt_rtp_aead_xchacha20_poly1305_rtpsize = (  # type: ignore[method-assign]
+        _leaves_the_extension
+    )
+
+    state = upstream.apply_receive_repair()
+
+    assert "extension" not in state.reason
+    for words in upstream._PROBE_EXTENSION_WORDS:
+        assert _decrypt_rtpsize(Connection(_Dave()), words) == _DAVE_OUTPUT
+
+
+def test_an_extension_probe_that_raises_leaves_pycord_alone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def explode(*args: object, **kwargs: object) -> str:
+        raise RuntimeError("unfamiliar decryptor")
+
+    monkeypatch.setattr(upstream, "_extension_handling", explode)
+
+    state = upstream.apply_receive_repair()
+
+    assert state.applied is False
+    assert "could not probe" in state.reason
+    assert PacketDecryptor.decrypt_rtp is _STOCK_DECRYPT_RTP
 
 
 def test_the_repair_is_applied_when_the_defect_is_present() -> None:
@@ -104,6 +225,9 @@ def test_a_correct_pycord_is_left_alone() -> None:
         return packet.decrypted_data
 
     PacketDecryptor.decrypt_rtp = correct  # type: ignore[method-assign]
+    PacketDecryptor._decrypt_rtp_aead_xchacha20_poly1305_rtpsize = (  # type: ignore[method-assign]
+        _leaves_the_extension
+    )
 
     state = upstream.apply_receive_repair()
 
