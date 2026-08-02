@@ -100,13 +100,15 @@ class FakeContext:
         self.guild = FakeGuild(guild_id) if guild_id is not None else None
         self.responses: list[tuple[str, bool]] = []
         self.deferred = False
+        self.deferred_ephemeral: bool | None = None
         self.followup = FakeFollowup()
 
     async def respond(self, content: str, ephemeral: bool = False) -> None:
         self.responses.append((content, ephemeral))
 
-    async def defer(self) -> None:
+    async def defer(self, ephemeral: bool = False) -> None:
         self.deferred = True
+        self.deferred_ephemeral = ephemeral
 
 
 def make_bot(tmp_path: Path) -> Any:
@@ -147,10 +149,13 @@ async def test_start_joins_and_announces_visibly(tmp_path: Path) -> None:
 
     await command(bot, "start")(ctx)
 
-    message, ephemeral = ctx.responses[0]
+    message, _file = ctx.followup.sent[0]
     assert "Recording general" in message
+    # Deferred before connecting, because joining voice outlasts the three
+    # seconds an interaction token is good for.
+    assert ctx.deferred is True
     # Announced publicly on purpose: consent and failure visibility.
-    assert ephemeral is False
+    assert ctx.deferred_ephemeral is False
     assert channel.voice_client.recording is True
 
 
@@ -436,10 +441,9 @@ async def test_start_reports_a_failure_rather_than_going_quiet(tmp_path: Path) -
     ctx = FakeContext(1, author)
     await command(bot, "start")(ctx)
 
-    message, ephemeral = ctx.responses[0]
+    message, _file = ctx.followup.sent[0]
     assert "Could not start recording" in message
     assert "3139" in message
-    assert ephemeral is True
     assert bot.sessions == {}
     assert channel.voice_client.disconnected is True
 
@@ -468,3 +472,26 @@ async def test_stop_answers_even_when_stopping_raises(
     # Answered rather than left thinking, and the session released either way.
     assert stop_ctx.followup.sent
     assert bot.sessions == {}
+
+
+async def test_the_sink_knows_its_client_before_recording_starts(tmp_path: Path) -> None:
+    # py-cord 2.8 never tells a sink which client it belongs to, and its opus
+    # decoder asserts on that while handling the first packet. Without this the
+    # router thread dies with the audio already decrypted and one step from
+    # being buffered, which reads as a recording that captured nothing.
+    bot = make_bot(tmp_path)
+    channel = FakeVoiceChannel(2, "general", [])
+    author = FakeMember(11, "Alpha", channel=channel)
+    channel.members = [author]
+
+    await command(bot, "start")(FakeContext(1, author))
+
+    assert bot.sessions[1].sink.client is channel.voice_client
+
+
+def test_the_finished_callback_is_not_a_coroutine() -> None:
+    # py-cord calls it from the router thread rather than awaiting it, so a
+    # coroutine would never run and the error it reports would be lost.
+    import inspect
+
+    assert not inspect.iscoroutinefunction(bot_module._on_recording_finished)

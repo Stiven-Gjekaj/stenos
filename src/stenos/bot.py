@@ -244,6 +244,12 @@ def register_commands(bot: StenosBot, guild_ids: list[int] | None = None) -> Any
             await ctx.respond("A recording is already in progress.", ephemeral=True)
             return
 
+        # Deferred before connecting, not after. Joining a voice channel takes
+        # several seconds and an interaction token expires after three, so a
+        # reply written afterwards is refused as an unknown interaction and the
+        # caller is told the application did not respond.
+        await ctx.defer()
+
         voice_client = await channel.connect()
         sink = TimestampedSink(segment_gap=bot.config.segment_gap)
         session = RecordingSession(
@@ -260,17 +266,22 @@ def register_commands(bot: StenosBot, guild_ids: list[int] | None = None) -> Any
         # actually begun. A failure here used to leave the command unanswered
         # and a session behind, so the bot went on describing a recording that
         # had never started.
+        # py-cord 2.8 never tells a sink which client it belongs to. The line
+        # that did is commented out in its reader, and the opus decoder asserts
+        # on it while handling the first packet, so the router thread dies with
+        # the audio already decrypted and one step from being buffered.
+        sink.init(voice_client)
+
         try:
             voice_client.start_recording(sink, _on_recording_finished)
         except Exception as error:
             log.exception("Could not start recording")
             with contextlib.suppress(Exception):
                 await voice_client.disconnect()
-            await ctx.respond(
+            await ctx.followup.send(
                 f"Could not start recording: {error.__class__.__name__}: {error}. "
                 f"Voice reception is currently broken in {receive_support().version}, "
-                f"tracked at {PYCORD_RECEIVE_ISSUE}.",
-                ephemeral=True,
+                f"tracked at {PYCORD_RECEIVE_ISSUE}."
             )
             return
 
@@ -278,7 +289,7 @@ def register_commands(bot: StenosBot, guild_ids: list[int] | None = None) -> Any
 
         # Announced unconditionally and non-ephemerally. Recording law varies
         # by jurisdiction and silent recording is never the intent.
-        await ctx.respond(
+        await ctx.followup.send(
             f"Recording {channel.name}. Every participant is recorded separately "
             f"and transcribed locally when the recording stops."
         )
@@ -381,8 +392,14 @@ def register_commands(bot: StenosBot, guild_ids: list[int] | None = None) -> Any
     return group
 
 
-async def _on_recording_finished(exception: BaseException | None = None) -> None:
-    """Surface any error raised by the receive loop."""
+def _on_recording_finished(exception: BaseException | None = None) -> None:
+    """Surface any error raised by the receive loop.
+
+    Deliberately not a coroutine. py-cord calls this straight from the router
+    thread rather than awaiting it, so a coroutine would be created, never run,
+    and the error it was meant to report would be lost behind a warning about
+    a coroutine that was never awaited.
+    """
     if exception is not None:
         log.error("Recording ended with an error: %s", exception)
 
