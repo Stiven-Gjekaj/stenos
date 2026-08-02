@@ -9,7 +9,7 @@ _One timestamped, speaker-attributed transcript. No audio leaves the machine_
 <p align="center">
   <img src="https://img.shields.io/badge/Python-3.11%20to%203.13-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python 3.11 to 3.13"/>
   <img src="https://img.shields.io/badge/dependencies-3_direct-007ec6?style=for-the-badge" alt="Three direct runtime dependencies"/>
-  <img src="https://img.shields.io/badge/tests-372_passing-427819?style=for-the-badge" alt="372 tests passing"/>
+  <img src="https://img.shields.io/badge/tests-382_passing-427819?style=for-the-badge" alt="382 tests passing"/>
 </p>
 
 <p align="center">
@@ -83,7 +83,7 @@ fanless laptop that will thermally throttle under sustained inference.
 ### Recording
 
 - A separate stream per participant, so attribution needs no diarisation
-- Packets timestamped on arrival, so a late joiner keeps its offset
+- Segments placed on the clock the packets carry, so buffering cannot skew them
 - Segments split on transmission gaps, with no voice activity detector
 - Display names cached as people join, so someone who leaves early is still named
 - Start and stop announced in the text channel, always
@@ -368,7 +368,7 @@ becomes text, and text becomes one ordered transcript.
 
 | Stage | File | Lines | Responsibility |
 | --- | --- | --- | --- |
-| **Receiving** | sink.py | 300 | Timestamps packets on arrival and splits segments on silence; loads libopus |
+| **Receiving** | sink.py | 393 | Places packets on the media clock they carry and splits segments on silence; loads libopus |
 | **Transport** | voice.py | 205 | Reads the end-to-end encryption state a voice connection negotiated |
 | **Transport** | upstream.py | 381 | Repairs the two py-cord 2.8.1 defects that lose received audio, when they are present |
 | **Conversion** | audio.py | 132 | Downmixes and resamples to 16 kHz mono, discarding fragments too short to carry speech |
@@ -377,7 +377,7 @@ becomes text, and text becomes one ordered transcript.
 | **Output** | transcript.py | 203 | Merges, orders, and writes the transcript and its sidecar portably |
 | **Commands** | bot.py | 529 | Slash commands, session state, the offline pipeline, and the CLI |
 | **Configuration** | config.py | 258 | Validated environment parsing and platform-aware backend resolution |
-| **Total** | **11 files** | **2426** | Plus 3660 lines of tests |
+| **Total** | **11 files** | **2519** | Plus 3847 lines of tests |
 
 ```
 src/stenos/      the bot (sink, transport, audio, transcription, output, commands)

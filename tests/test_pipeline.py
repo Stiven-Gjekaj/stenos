@@ -231,7 +231,10 @@ def test_result_reports_counts_and_duration(tmp_path: Path) -> None:
     assert result.segment_count == 2
     assert result.speakers == 2
     assert result.packet_count == 80
-    assert result.duration == pytest.approx(5.78, abs=0.01)
+    # 5.78 is when the last packet arrived. The 20 ms it carries runs to 5.80,
+    # and a recording lasts until its audio ends rather than until delivery of
+    # the audio stops.
+    assert result.duration == pytest.approx(5.80, abs=0.01)
 
 
 def test_hostile_channel_names_still_produce_a_written_file(tmp_path: Path) -> None:

@@ -1,11 +1,27 @@
-"""A sink that records packet arrival times so segments keep their position in the call.
+"""A sink that keeps each segment at the point in the call where it was spoken.
 
 The sink bundled with py-cord concatenates every packet a user sends into one
 stream, which discards the point in the call at which each utterance occurred. A
 participant who joins or starts speaking late is then placed at the wrong offset
-in a merged transcript. This sink instead timestamps each packet on arrival and
+in a merged transcript. This sink instead places every packet on a timeline and
 opens a new segment whenever a speaker falls silent for longer than the gap
 threshold.
+
+Which timeline is the whole question. Arrival time is the obvious answer and the
+wrong one: py-cord 2.8 drains a jitter buffer into the sink and synthesises
+packets to cover gaps, so a burst delivers several seconds of audio in a
+fraction of a second, and arrival stops tracking speech. Segments timed that way
+run longer than the span they were received in and overlap the segments after
+them.
+
+Every packet carries its own answer. The RTP timestamp counts samples at the
+sample rate the audio is decoded to, advancing with the audio rather than with
+delivery, so it is unaffected by whatever buffering happens in front of the
+sink. It is used wherever it is present, measured from each participant's first
+packet, because the count starts at an arbitrary value that is unrelated between
+one participant and the next. Arrival still decides where a participant's stream
+begins relative to the recording, since that is the only clock the two have in
+common.
 
 Discord clients transmit only while someone is speaking, so the gaps between
 packets are the silence and no separate voice activity detector is required.
@@ -45,6 +61,16 @@ DISCORD_SAMPLE_WIDTH = 2
 
 #: Byte count of one second of decoded audio in the format above.
 BYTES_PER_SECOND = DISCORD_SAMPLE_RATE * DISCORD_CHANNELS * DISCORD_SAMPLE_WIDTH
+
+#: RTP timestamps count samples in an unsigned 32 bit field, so they wrap. At
+#: the Discord sample rate that happens roughly once a day.
+TICK_WRAP = 2**32
+
+#: How far the media clock may run from arrival before it is read as having been
+#: re-based rather than merely buffered. Buffering moves audio by fractions of a
+#: second; a stream that restarts moves it by hours, since the new count begins
+#: somewhere unrelated.
+MAX_CLOCK_DISAGREEMENT = 60.0
 
 DEFAULT_SEGMENT_GAP = 0.4
 
@@ -131,25 +157,76 @@ def ensure_opus(path: str | None = None) -> bool:
     return any(_try_load(candidate) for candidate in opus_library_candidates())
 
 
-def _decoded(data: Any, user: Any) -> tuple[bytes | None, int | None]:
+def _decoded(data: Any, user: Any) -> tuple[bytes | None, int | None, int | None]:
     """Normalise the two calling conventions py-cord has used for a sink write.
 
     Before 2.8 the router passed decoded audio and an integer user identifier.
-    From 2.8 it passes a VoiceData carrying the audio, and the member object it
-    came from rather than an identifier. Both are read here, so the sink works
-    against either release and so tests that call write directly keep saying
-    what they were written to say.
+    From 2.8 it passes a VoiceData carrying the audio, the packet it was decoded
+    from, and the member it came from rather than an identifier. All three are
+    read here, so the sink works against either release and so tests that call
+    write directly keep saying what they were written to say.
 
-    Either half may be absent. A packet with no audio in it is nothing to
-    record, and one whose speaker is unknown cannot be attributed, so each is
-    reported as None for the caller to handle.
+    Any part may be absent. A packet with no audio in it is nothing to record,
+    one whose speaker is unknown cannot be attributed, and one carrying no media
+    timestamp has to be placed by arrival instead, so each is reported as None
+    for the caller to handle.
     """
     payload = getattr(data, "pcm", data)
     if not isinstance(payload, bytes | bytearray | memoryview) or not payload:
-        return None, None
+        return None, None, None
 
     speaker = getattr(user, "id", user)
-    return bytes(payload), speaker if isinstance(speaker, int) else None
+    ticks = getattr(getattr(data, "packet", None), "timestamp", None)
+    return (
+        bytes(payload),
+        speaker if isinstance(speaker, int) else None,
+        ticks if isinstance(ticks, int) else None,
+    )
+
+
+def _ticks_between(origin: int, current: int) -> int:
+    """Samples from one RTP timestamp to another, taking the shorter way round.
+
+    The field wraps, so the distance from a value near the top to one near the
+    bottom is small and forward rather than enormous and backward.
+    """
+    delta = (current - origin) % TICK_WRAP
+    return delta - TICK_WRAP if delta >= TICK_WRAP // 2 else delta
+
+
+@dataclass(slots=True)
+class _Speaker:
+    """Where one participant's audio sits on the recording timeline.
+
+    ``base`` is where this participant's first packet landed, measured from the
+    recording origin. Everything after it is measured from that packet on the
+    participant's own media clock, which is the only clock that stays true to
+    the audio once a buffer sits in front of the sink.
+    """
+
+    base: float
+    ticks: int | None
+    position: float = field(init=False)
+
+    def __post_init__(self) -> None:
+        self.position = self.base
+
+    def locate(self, ticks: int | None, arrival: float) -> float:
+        """Where on the recording timeline the packet being written belongs."""
+        if self.ticks is None or ticks is None:
+            return arrival
+
+        position = self.base + _ticks_between(self.ticks, ticks) / DISCORD_SAMPLE_RATE
+        if abs(position - arrival) <= MAX_CLOCK_DISAGREEMENT:
+            return position
+
+        # A stream that restarts counts from somewhere new, and reading the old
+        # origin against the new count puts the audio hours from where it
+        # belongs. Arrival cannot be wrong by that much, so it settles the
+        # disagreement and the media clock starts again from this packet.
+        self.base = arrival
+        self.ticks = ticks
+        return arrival
 
 
 @dataclass(slots=True)
@@ -210,7 +287,7 @@ class TimestampedSink(Sink):
         self._origin: float | None = None
         self._segments: list[Segment] = []
         self._open: dict[int, Segment] = {}
-        self._last_packet: dict[int, float] = {}
+        self._speakers: dict[int, _Speaker] = {}
         self._packet_count = 0
         self._last_arrival: float | None = None
         self._unattributed = 0
@@ -230,7 +307,7 @@ class TimestampedSink(Sink):
     @Filters.container
     def write(self, data: Any, user: Any) -> None:
         """Buffer one decoded packet, opening a new segment after a silent gap."""
-        payload, speaker = _decoded(data, user)
+        payload, speaker, ticks = _decoded(data, user)
         if payload is None:
             return
         if speaker is None:
@@ -245,16 +322,26 @@ class TimestampedSink(Sink):
         with self._lock:
             if self._origin is None:
                 self._origin = now
+            arrival = now - self._origin
+
+            state = self._speakers.get(speaker)
+            if state is None:
+                # The first packet from a participant is the one point at which
+                # arrival has to be trusted, since it is what ties their clock
+                # to everyone else's.
+                state = self._speakers[speaker] = _Speaker(base=arrival, ticks=ticks)
+                position = arrival
+            else:
+                position = state.locate(ticks, arrival)
 
             segment = self._open.get(speaker)
-            previous = self._last_packet.get(speaker)
-            if segment is None or previous is None or (now - previous) > self.segment_gap:
-                segment = Segment(user_id=speaker, start=now - self._origin)
+            if segment is None or (position - state.position) > self.segment_gap:
+                segment = Segment(user_id=speaker, start=position)
                 self._open[speaker] = segment
                 self._segments.append(segment)
 
             segment.pcm.extend(payload)
-            self._last_packet[speaker] = now
+            state.position = position
             self._last_arrival = now
             self._packet_count += 1
 
@@ -289,12 +376,18 @@ class TimestampedSink(Sink):
     def user_ids(self) -> frozenset[int]:
         """Identifiers of every participant that transmitted at least one packet."""
         with self._lock:
-            return frozenset(self._last_packet)
+            return frozenset(self._speakers)
 
     @property
     def duration(self) -> float:
-        """Seconds between the first and last packet received."""
+        """Seconds from the first packet to the end of the last audio recorded.
+
+        Not the span between the first and last arrival. The audio a packet
+        carries extends past the moment it arrived, and with a buffer in front
+        of the sink the last packet can land well before the audio in it ends.
+        """
         with self._lock:
             if self._origin is None or self._last_arrival is None:
                 return 0.0
-            return self._last_arrival - self._origin
+            ends = [segment.end for segment in self._segments]
+            return max(self._last_arrival - self._origin, *ends) if ends else 0.0

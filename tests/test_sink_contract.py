@@ -57,22 +57,27 @@ def test_audio_is_requested_decoded_rather_than_as_opus() -> None:
 class VoiceData:
     """The shape py-cord 2.8 hands to a sink."""
 
-    def __init__(self, pcm: bytes) -> None:
+    def __init__(self, pcm: bytes, timestamp: int | None = None) -> None:
         self.pcm = pcm
+        self.packet = None if timestamp is None else SimpleNamespace(timestamp=timestamp)
 
 
 def test_the_current_calling_convention_is_understood() -> None:
-    payload, speaker = _decoded(VoiceData(b"\x01\x02"), SimpleNamespace(id=77))
+    payload, speaker, ticks = _decoded(VoiceData(b"\x01\x02", 96000), SimpleNamespace(id=77))
 
     assert payload == b"\x01\x02"
     assert speaker == 77
+    assert ticks == 96000
 
 
 def test_the_previous_calling_convention_still_works() -> None:
-    payload, speaker = _decoded(b"\x01\x02", 77)
+    # No packet came with the audio, so there is no media clock to read and the
+    # sink has to fall back to arrival.
+    payload, speaker, ticks = _decoded(b"\x01\x02", 77)
 
     assert payload == b"\x01\x02"
     assert speaker == 77
+    assert ticks is None
 
 
 @pytest.mark.parametrize(
@@ -85,14 +90,25 @@ def test_the_previous_calling_convention_still_works() -> None:
     ],
 )
 def test_a_packet_with_no_audio_is_nothing_to_record(data: Any, user: Any) -> None:
-    assert _decoded(data, user) == (None, None)
+    assert _decoded(data, user) == (None, None, None)
 
 
 def test_an_unknown_speaker_is_reported_rather_than_guessed() -> None:
-    payload, speaker = _decoded(VoiceData(b"\x01\x02"), None)
+    payload, speaker, _ = _decoded(VoiceData(b"\x01\x02"), None)
 
     assert payload == b"\x01\x02"
     assert speaker is None
+
+
+def test_a_packet_carrying_no_media_timestamp_is_placed_by_arrival() -> None:
+    # A shape that carries a packet without a usable timestamp is treated the
+    # same as one that carries no packet at all, rather than reading whatever
+    # the attribute happens to hold.
+    _, _, ticks = _decoded(
+        SimpleNamespace(pcm=b"\x01\x02", packet=SimpleNamespace(timestamp=None)), 77
+    )
+
+    assert ticks is None
 
 
 def test_writing_through_the_current_convention_records_a_segment() -> None:

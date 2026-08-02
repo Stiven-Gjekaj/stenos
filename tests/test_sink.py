@@ -1,12 +1,19 @@
-"""Tests for gap-based segmentation and arrival timestamping."""
+"""Tests for gap-based segmentation and the timeline segments are placed on."""
 
 from __future__ import annotations
 
 from collections.abc import Sequence
+from itertools import pairwise
 
 import pytest
 
-from stenos.sink import BYTES_PER_SECOND, Segment, TimestampedSink
+from stenos.sink import (
+    BYTES_PER_SECOND,
+    DISCORD_SAMPLE_RATE,
+    MAX_CLOCK_DISAGREEMENT,
+    Segment,
+    TimestampedSink,
+)
 
 #: One Discord voice frame is 20 ms of 48 kHz stereo signed 16 bit audio.
 FRAME_BYTES = BYTES_PER_SECOND // 50
@@ -207,3 +214,164 @@ def test_segment_duration_derives_from_the_byte_count() -> None:
 
 def test_empty_segment_has_zero_duration() -> None:
     assert Segment(user_id=1, start=0.0).duration == pytest.approx(0.0)
+
+
+# The media clock. Every test below drives the sink through the shape py-cord
+# 2.8 uses, where a packet arrives with the RTP timestamp it was decoded from,
+# and where arrival no longer tracks speech because a jitter buffer sits in
+# front of the sink.
+
+#: Samples one 20 ms frame advances an RTP timestamp by.
+FRAME_TICKS = 960
+
+
+class Packet:
+    """The part of an RTP packet the sink reads."""
+
+    def __init__(self, timestamp: int) -> None:
+        self.timestamp = timestamp
+
+
+class Data:
+    """The shape py-cord 2.8 hands to a sink."""
+
+    def __init__(self, timestamp: int, pcm: bytes = FRAME) -> None:
+        self.pcm = pcm
+        self.packet = Packet(timestamp)
+
+
+class Member:
+    def __init__(self, id: int) -> None:
+        self.id = id
+
+
+def record_media(
+    packets: Sequence[tuple[float, int, int]],
+    *,
+    segment_gap: float = 0.4,
+) -> TimestampedSink:
+    """Drive a sink with (arrival time, media timestamp, user) packets."""
+    sink = TimestampedSink(
+        segment_gap=segment_gap,
+        clock=ScriptedClock([arrival for arrival, _, _ in packets]),
+    )
+    for _, ticks, user in packets:
+        sink.write(Data(ticks), Member(user))
+    return sink
+
+
+def test_segments_do_not_overlap_when_delivery_outruns_the_audio() -> None:
+    # The recorded failure. A burst delivered five seconds of audio in one, and
+    # segments timed by arrival ran past the segments that followed them.
+    base = 1_000_000
+    burst = [(0.2 + index * 0.004, base + index * FRAME_TICKS, 1) for index in range(50)]
+    later = [(1.5 + index * 0.02, base + 96_000 + index * FRAME_TICKS, 1) for index in range(10)]
+
+    segments = record_media(burst + later).segments()
+
+    assert len(segments) == 2
+    assert segments[0].duration == pytest.approx(1.0)
+    # One second of audio starting at 0.0, and the next segment starts after it
+    # rather than a fifth of the way into it.
+    assert segments[0].end == pytest.approx(1.0)
+    assert segments[1].start == pytest.approx(2.0)
+    for earlier, following in pairwise(segments):
+        assert earlier.end <= following.start
+
+
+def test_a_gap_in_the_audio_splits_even_when_packets_arrive_together() -> None:
+    # Both packets land in the same millisecond, so arrival says there was no
+    # silence. The media clock says a second passed, and it is right.
+    sink = record_media([(0.0, 1_000_000, 1), (0.001, 1_000_000 + 48_000, 1)])
+
+    assert boundaries(sink) == [(1, 0.0), (1, 1.0)]
+
+
+def test_audio_that_is_continuous_stays_one_segment_however_it_arrives() -> None:
+    # The converse. Arrival gaps far past the threshold, media timestamps
+    # contiguous, so nothing was actually missed and nothing should split.
+    packets = [(index * 2.0, 500 + index * FRAME_TICKS, 1) for index in range(5)]
+
+    assert boundaries(record_media(packets)) == [(1, 0.0)]
+
+
+def test_timestamps_wrapping_past_the_field_do_not_jump_backwards() -> None:
+    # RTP timestamps are unsigned 32 bit and wrap roughly once a day. Read as
+    # plain integers the second packet lands billions of seconds before the
+    # first, and the recording would be nonsense from that point on.
+    packets = [(0.0, 2**32 - FRAME_TICKS, 1), (0.02, 0, 1), (0.04, FRAME_TICKS, 1)]
+
+    assert boundaries(record_media(packets)) == [(1, 0.0)]
+
+
+#: A base a restarted stream might pick. The field is chosen at random across
+#: its whole range, so a new one lands more than half a day from the old one far
+#: more often than it lands near it.
+RESTART_TICKS = 2_500_000_000
+
+
+def test_a_stream_that_restarts_is_placed_by_arrival_rather_than_hours_away() -> None:
+    # A reconnect gives a participant a fresh, unrelated timestamp base. Trusting
+    # it would put the rest of their call half a day from where it belongs, so
+    # arrival settles the disagreement and the media clock starts again.
+    packets = [
+        (0.0, 1_000_000, 1),
+        (0.02, 1_000_000 + FRAME_TICKS, 1),
+        (2.0, RESTART_TICKS, 1),
+    ]
+
+    assert boundaries(record_media(packets)) == [(1, 0.0), (1, 2.0)]
+
+
+def test_a_restarted_stream_keeps_its_new_base_for_what_follows() -> None:
+    packets = [
+        (0.0, 1_000_000, 1),
+        (2.0, RESTART_TICKS, 1),
+        (2.004, RESTART_TICKS + FRAME_TICKS, 1),
+        (2.008, RESTART_TICKS + 2 * FRAME_TICKS, 1),
+    ]
+
+    segments = record_media(packets).segments()
+
+    assert len(segments) == 2
+    # Three frames after the restart, measured on the new base rather than on
+    # the compressed arrivals that delivered them.
+    assert segments[1].start == pytest.approx(2.0)
+    assert segments[1].duration == pytest.approx(0.06)
+
+
+def test_a_disagreement_a_buffer_could_explain_is_not_treated_as_a_restart() -> None:
+    # The media clock running well ahead of arrival is exactly what a burst of
+    # buffered audio looks like, and re-basing on it would undo the fix. Only a
+    # disagreement no amount of buffering could produce counts as a restart.
+    ahead = int(MAX_CLOCK_DISAGREEMENT * DISCORD_SAMPLE_RATE) - FRAME_TICKS
+    packets = [(0.0, 1_000_000, 1), (0.02, 1_000_000 + ahead, 1)]
+
+    segments = record_media(packets).segments()
+
+    assert segments[-1].start == pytest.approx(ahead / DISCORD_SAMPLE_RATE)
+
+
+def test_participants_with_unrelated_bases_keep_their_offsets() -> None:
+    # Two participants count from different arbitrary values, so their
+    # timestamps cannot be compared to each other. Arrival places the first
+    # packet of each, and the media clock takes over from there.
+    packets = [
+        (0.0, 1_000_000, 1),
+        (5.0, 40_000_000, 2),
+        (5.004, 1_000_000 + 48_000 * 5, 1),
+        (5.008, 40_000_000 + FRAME_TICKS, 2),
+    ]
+
+    sink = record_media(packets)
+
+    assert boundaries(sink) == [(1, 0.0), (1, 5.0), (2, 5.0)]
+
+
+def test_duration_reaches_the_end_of_the_audio_not_the_last_arrival() -> None:
+    burst = [(0.0 + index * 0.001, 1_000_000 + index * FRAME_TICKS, 1) for index in range(50)]
+
+    sink = record_media(burst)
+
+    # Fifty frames is a second of audio, delivered in a twentieth of one.
+    assert sink.duration == pytest.approx(1.0)
