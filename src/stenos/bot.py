@@ -37,7 +37,12 @@ from .transcript import (
     write_sidecar,
     write_transcript,
 )
-from .upstream import apply_receive_repair, receive_repair_state
+from .upstream import (
+    apply_receive_repair,
+    receive_repair_state,
+    skipped_frames,
+    tolerate_undecodable_frames,
+)
 from .voice import PYCORD_RECEIVE_ISSUE, dave_state, dave_support, receive_support
 
 __all__ = [
@@ -272,6 +277,10 @@ def register_commands(bot: StenosBot, guild_ids: list[int] | None = None) -> Any
         # the audio already decrypted and one step from being buffered.
         sink.init(voice_client)
 
+        # One malformed frame would otherwise stop the router thread and
+        # with it the recording, discarding everything that follows.
+        tolerate_undecodable_frames()
+
         try:
             voice_client.start_recording(sink, _on_recording_finished)
         except Exception as error:
@@ -361,10 +370,24 @@ def register_commands(bot: StenosBot, guild_ids: list[int] | None = None) -> Any
             )
             return
 
-        await ctx.followup.send(
-            describe_result(result),
-            file=_attachment_for(result, ctx),
-        )
+        # The keyword is omitted rather than passed as None. Discord's helper
+        # reads an attribute off whatever it is given, so an explicit None
+        # raises while building the message and the caller is left waiting.
+        message = describe_result(result)
+        skipped = skipped_frames()
+        if skipped:
+            # A gap in a transcript should have a stated cause rather than
+            # looking like a pause in the conversation.
+            message += (
+                f" {skipped} packets would not decode and were skipped, "
+                f"so short stretches of audio are missing."
+            )
+
+        attachment = _attachment_for(result, ctx)
+        if attachment is None:
+            await ctx.followup.send(message)
+        else:
+            await ctx.followup.send(message, file=attachment)
 
     @group.command(name="status", description="Report the state of the current recording")
     async def record_status(ctx: discord.ApplicationContext) -> None:

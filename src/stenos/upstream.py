@@ -31,6 +31,8 @@ __all__ = [
     "PatchState",
     "apply_receive_repair",
     "receive_repair_state",
+    "skipped_frames",
+    "tolerate_undecodable_frames",
 ]
 
 log = logging.getLogger("stenos")
@@ -187,3 +189,56 @@ def apply_receive_repair() -> PatchState:
 def receive_repair_state() -> PatchState:
     """The decision made about the repair, applying it if that has not happened."""
     return apply_receive_repair()
+
+
+_skipped = 0
+_decode_patched = False
+
+
+def skipped_frames() -> int:
+    """Packets discarded because they would not decode."""
+    return _skipped
+
+
+def tolerate_undecodable_frames() -> bool:
+    """Let a packet that will not decode be skipped rather than end the recording.
+
+    py-cord lets an opus decode failure out of the router thread, which stops
+    that thread, which stops the recording. One malformed frame therefore
+    discards every second of audio that would have followed it.
+
+    A frame that will not decode is a fragment of one utterance. Losing it
+    costs a syllable. Losing the rest of the call costs the recording, so the
+    failure is confined to the packet that caused it and counted, and the
+    reason a transcript has gaps stays visible.
+    """
+    global _decode_patched
+    if _decode_patched:
+        return True
+
+    try:
+        from discord.opus import OpusError, PacketDecoder
+    except Exception as error:
+        log.debug("Cannot make decoding tolerant: %s", error)
+        return False
+
+    original = PacketDecoder._decode_packet
+
+    def _decode_packet(self: Any, packet: Any) -> Any:
+        global _skipped
+        try:
+            return original(self, packet)
+        except OpusError as error:
+            _skipped += 1
+            if _skipped == 1:
+                log.warning(
+                    "A packet would not decode (%s). Skipping it and any others "
+                    "like it, rather than ending the recording.",
+                    error,
+                )
+            # An empty payload, which the sink reads as nothing to record.
+            return packet, b""
+
+    PacketDecoder._decode_packet = _decode_packet  # type: ignore[method-assign]
+    _decode_patched = True
+    return True
