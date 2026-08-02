@@ -1901,9 +1901,10 @@ wheels = [
 
 [[package]]
 name = "stenos"
-version = "0.1.3.21"
+version = "0.1.4.0"
 source = { editable = "." }
 dependencies = [
+    { name = "certifi" },
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "numpy", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "py-cord", extra = ["voice"] },
@@ -1932,6 +1933,7 @@ freeze = [
 
 [package.metadata]
 requires-dist = [
+    { name = "certifi", specifier = ">=2024.2" },
     { name = "faster-whisper", marker = "extra == 'cuda'", specifier = ">=1.1" },
     { name = "mlx-whisper", marker = "extra == 'mlx'", specifier = ">=0.4" },
     { name = "numpy", specifier = ">=1.26" },

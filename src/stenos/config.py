@@ -15,10 +15,12 @@ __all__ = [
     "BACKEND_AUTO",
     "BACKEND_FASTER_WHISPER",
     "BACKEND_MLX",
+    "CERT_FILE_VARIABLE",
     "Config",
     "ConfigError",
     "bundle_directory",
     "bundled_backend",
+    "certificate_bundle",
     "load_config",
     "resolve_backend",
 ]
@@ -127,6 +129,41 @@ def resolve_backend(
     if system == "Darwin" and machine.lower() in _APPLE_SILICON_MACHINES:
         return BACKEND_MLX
     return BACKEND_FASTER_WHISPER
+
+
+#: Environment variable OpenSSL reads to find a certificate authority list.
+CERT_FILE_VARIABLE = "SSL_CERT_FILE"
+
+
+def certificate_bundle() -> str | None:
+    """Point OpenSSL at a certificate list that exists on this machine.
+
+    Returns the path in use, or None when nothing needed doing.
+
+    A frozen executable carries no certificate store of its own, and the paths
+    compiled into its ssl module are those of the machine that built it. On any
+    other machine those paths do not exist, so every HTTPS connection fails to
+    verify and the bot cannot even log in. certifi is a dependency for that
+    reason, and naming its bundle in the environment is what OpenSSL reads.
+
+    An existing setting is left alone, so anyone pointing at a corporate root
+    keeps it.
+    """
+    if os.environ.get(CERT_FILE_VARIABLE):
+        return os.environ[CERT_FILE_VARIABLE]
+
+    try:
+        import certifi
+    except ImportError:
+        return None
+
+    bundle = certifi.where()
+    if not Path(bundle).is_file():
+        return None
+
+    os.environ[CERT_FILE_VARIABLE] = bundle
+    os.environ.setdefault("SSL_CERT_DIR", str(Path(bundle).parent))
+    return bundle
 
 
 def _lookup(env: Mapping[str, str], key: str) -> str | None:
