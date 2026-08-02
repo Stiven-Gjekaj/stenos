@@ -35,20 +35,31 @@ Whether to apply either is decided by running the decryptor, not by comparing
 version numbers. A py-cord that returns the payload intact is left alone, so
 these become inert the moment the defects are fixed upstream rather than needing
 to be noticed and removed.
+
+Three smaller things live here for the same reason. A packet that will not
+decode is skipped rather than allowed to end the recording. The router thread is
+stopped from reporting its own stop as an error. And py-cord is stopped from
+telling the user that reception cannot work at the moment it does, and from
+logging an ordinary RTCP sender report as a surprise several times a minute.
 """
 
 from __future__ import annotations
 
 import logging
+import re
 import struct
+import warnings
 from dataclasses import dataclass
 from typing import Any
 
 __all__ = [
     "PatchState",
     "apply_receive_repair",
+    "quieten_rtcp_reports",
+    "quieten_stale_receive_warning",
     "receive_repair_state",
     "skipped_frames",
+    "tolerate_double_stop",
     "tolerate_undecodable_frames",
 ]
 
@@ -378,4 +389,92 @@ def tolerate_undecodable_frames() -> bool:
 
     PacketDecoder._decode_packet = _decode_packet  # type: ignore[method-assign]
     _decode_patched = True
+    return True
+
+
+_stop_patched = False
+
+
+def tolerate_double_stop() -> bool:
+    """Let py-cord's router thread end a recording without reporting an error.
+
+    ``PacketRouter.run`` calls ``stop_recording`` from its finally block, on
+    every path including the one where the recording was stopped by the caller
+    a moment earlier. The second call raises, in a thread with nothing to catch
+    it, so a recording that worked ends with a traceback describing nothing the
+    caller did and nothing that failed.
+
+    The exception is swallowed where the thread would otherwise print it, and
+    only that exception, so a router that stops for any other reason still says
+    so.
+    """
+    global _stop_patched
+    if _stop_patched:
+        return True
+
+    try:
+        from discord.sinks.errors import RecordingException
+        from discord.voice.receive.router import PacketRouter
+    except Exception as error:
+        log.debug("Cannot quieten the router thread: %s", error)
+        return False
+
+    original = PacketRouter.run
+
+    def run(self: Any) -> None:
+        try:
+            original(self)
+        except RecordingException:
+            log.debug("py-cord stopped a recording that had already been stopped.")
+
+    PacketRouter.run = run  # type: ignore[method-assign]
+    _stop_patched = True
+    return True
+
+
+#: The opening of the warning py-cord raises from start_recording and
+#: stop_recording. Matched on its first clause, which is enough to identify it
+#: and short enough to survive the wording of the rest changing.
+_STALE_WARNING = "Voice reception is currently broken"
+
+
+def quieten_stale_receive_warning() -> bool:
+    """Stop py-cord telling the user that reception cannot work, once it does.
+
+    Starting and stopping a recording each warn that voice reception is broken
+    upstream. On a stock install that is true. It stops being true the moment
+    the decryption is repaired, and leaving it in place tells everyone their
+    recording will fail while it is being written to disk in front of them.
+
+    Suppressed only when a repair was actually applied, so a py-cord this
+    module decided to leave alone keeps whatever it has to say about itself.
+    """
+    if not apply_receive_repair().applied:
+        return False
+
+    warnings.filterwarnings("ignore", message=re.escape(_STALE_WARNING), category=RuntimeWarning)
+    return True
+
+
+class _SenderReports(logging.Filter):
+    """Drop the reader's complaint about a packet that is not unexpected."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return not str(record.msg).startswith("Received unexpected rtcp packet")
+
+
+def quieten_rtcp_reports() -> bool:
+    """Stop the reader logging every RTCP sender report as a surprise.
+
+    A sender report is an ordinary part of an RTP session, sent several times a
+    minute by every participant. py-cord logs each one at INFO as an unexpected
+    packet, which buries anything worth reading under forty lines a minute that
+    describe nothing wrong.
+
+    Only that one message is dropped, so the logger keeps saying everything
+    else it says.
+    """
+    logger = logging.getLogger("discord.voice.receive.reader")
+    if not any(isinstance(item, _SenderReports) for item in logger.filters):
+        logger.addFilter(_SenderReports())
     return True

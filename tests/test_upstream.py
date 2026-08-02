@@ -1,32 +1,39 @@
-"""Tests for the repair applied to py-cord's receive decryption.
+"""Tests for the repairs applied to the installed py-cord.
 
-Every test starts from stock py-cord. The replacement is installed on a class
-belonging to another package, so the original is captured once at import, before
-anything has had a chance to replace it, and put back after each test.
+Every test starts from stock py-cord. The replacements are installed on classes
+belonging to another package, so the originals are captured once at import,
+before anything has had a chance to replace them, and put back after each test.
 """
 
 from __future__ import annotations
 
+import logging
+import warnings
 from collections.abc import Iterator
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 from discord.voice.packets.core import OPUS_SILENCE
 from discord.voice.packets.rtp import RTPPacket
 from discord.voice.receive.reader import PacketDecryptor
+from discord.voice.receive.router import PacketRouter
 
 from stenos import upstream
 
 _STOCK_DECRYPT_RTP = PacketDecryptor.decrypt_rtp
 _STOCK_RTPSIZE = PacketDecryptor._decrypt_rtp_aead_xchacha20_poly1305_rtpsize
+_STOCK_RUN = PacketRouter.run
 
 
 def _restore_stock_pycord() -> None:
     upstream._STATE = None
+    upstream._stop_patched = False
     PacketDecryptor.decrypt_rtp = _STOCK_DECRYPT_RTP  # type: ignore[method-assign]
     PacketDecryptor._decrypt_rtp_aead_xchacha20_poly1305_rtpsize = (  # type: ignore[method-assign]
         _STOCK_RTPSIZE
     )
+    PacketRouter.run = _STOCK_RUN  # type: ignore[method-assign]
 
 
 @pytest.fixture(autouse=True)
@@ -340,3 +347,117 @@ def test_a_ready_session_still_decrypts_through_dave() -> None:
     upstream.apply_receive_repair()
 
     assert _decrypt(Connection(Ready())) == b"decrypted by dave"
+
+
+# The three smaller repairs. Each removes something py-cord says or does that
+# describes a problem the caller does not have.
+
+
+class Waiter:
+    def clear(self) -> None:
+        return None
+
+
+class Router:
+    """The parts of a packet router py-cord's own run method touches."""
+
+    def __init__(self, stopping: Exception | None) -> None:
+        self.reader = SimpleNamespace(client=SimpleNamespace(stop_recording=self._stop), error=None)
+        self.waiter = Waiter()
+        self.ran = False
+        self._stopping = stopping
+
+    def _do_run(self) -> None:
+        self.ran = True
+
+    def _stop(self) -> None:
+        if self._stopping is not None:
+            raise self._stopping
+
+
+def test_the_router_stopping_a_recording_it_already_stopped_is_not_an_error() -> None:
+    # py-cord calls stop_recording from run's finally on every path, including
+    # the one where the caller stopped the recording a moment earlier. The
+    # second call raises in a thread with nothing to catch it, so a recording
+    # that worked ends with a traceback.
+    from discord.sinks.errors import RecordingException
+
+    assert upstream.tolerate_double_stop() is True
+    router = Router(RecordingException("You are not recording"))
+
+    PacketRouter.run(router)
+
+    assert router.ran is True
+
+
+def test_a_router_that_fails_for_another_reason_still_says_so() -> None:
+    upstream.tolerate_double_stop()
+    router = Router(ValueError("the socket went away"))
+
+    with pytest.raises(ValueError, match="socket"):
+        PacketRouter.run(router)
+
+
+def test_quietening_the_router_happens_once() -> None:
+    assert upstream.tolerate_double_stop() is True
+    patched = PacketRouter.run
+
+    assert upstream.tolerate_double_stop() is True
+    assert PacketRouter.run is patched
+
+
+def test_the_stale_receive_warning_is_dropped_once_reception_is_repaired() -> None:
+    _require_repair()
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        applied = upstream.quieten_stale_receive_warning()
+        warnings.warn(f"{upstream._STALE_WARNING} due to DAVE.", RuntimeWarning, stacklevel=1)
+        warnings.warn("Something else entirely.", RuntimeWarning, stacklevel=1)
+
+    assert applied is True
+    assert [str(entry.message) for entry in caught] == ["Something else entirely."]
+
+
+def test_a_pycord_that_was_left_alone_keeps_what_it_says_about_itself() -> None:
+    # Nothing was repaired, so there is no basis for contradicting it.
+    def correct(self: Any, packet: Any) -> Any:
+        packet.decrypted_data = self._decryptor_rtp(packet)
+        return packet.decrypted_data
+
+    PacketDecryptor.decrypt_rtp = correct  # type: ignore[method-assign]
+    PacketDecryptor._decrypt_rtp_aead_xchacha20_poly1305_rtpsize = (  # type: ignore[method-assign]
+        _leaves_the_extension
+    )
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        applied = upstream.quieten_stale_receive_warning()
+        warnings.warn(f"{upstream._STALE_WARNING} due to DAVE.", RuntimeWarning, stacklevel=1)
+
+    assert applied is False
+    assert len(caught) == 1
+
+
+def _record(message: str) -> logging.LogRecord:
+    return logging.LogRecord("reader", logging.INFO, "reader.py", 1, message, (), None)
+
+
+def test_a_sender_report_is_dropped_and_the_rest_of_the_log_is_kept() -> None:
+    noise = upstream._SenderReports()
+
+    assert noise.filter(_record("Received unexpected rtcp packet type=%s, %s")) is False
+    assert noise.filter(_record("Voice connection completed")) is True
+
+
+def test_the_filter_is_attached_to_the_reader_that_emits_it() -> None:
+    logger = logging.getLogger("discord.voice.receive.reader")
+    before = list(logger.filters)
+    try:
+        assert upstream.quieten_rtcp_reports() is True
+        added = [item for item in logger.filters if item not in before]
+
+        assert len(added) == 1
+        assert isinstance(added[0], upstream._SenderReports)
+    finally:
+        logger.filters = before

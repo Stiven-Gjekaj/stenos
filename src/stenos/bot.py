@@ -39,8 +39,11 @@ from .transcript import (
 )
 from .upstream import (
     apply_receive_repair,
+    quieten_rtcp_reports,
+    quieten_stale_receive_warning,
     receive_repair_state,
     skipped_frames,
+    tolerate_double_stop,
     tolerate_undecodable_frames,
 )
 from .voice import PYCORD_RECEIVE_ISSUE, dave_state, dave_support, receive_support
@@ -514,11 +517,18 @@ def main(argv: Sequence[str] | None = None) -> int:
             OPUS_PATH_VARIABLE,
         )
 
-    # Before connecting. py-cord 2.8.1 discards received audio on a call that
-    # carries no encryption, which would otherwise produce a recording that
-    # captured nothing. Applied only when that is what the installed version
-    # actually does.
+    # Before connecting. py-cord 2.8.1 loses received audio twice over, once on
+    # a call that carries no encryption and once on every call that does, which
+    # would otherwise produce a recording of silence. Applied only when that is
+    # what the installed version actually does.
     apply_receive_repair()
+
+    # With reception repaired, what py-cord says about reception is out of date,
+    # and the traceback its router prints at the end of a working recording
+    # describes nothing that went wrong.
+    quieten_stale_receive_warning()
+    quieten_rtcp_reports()
+    tolerate_double_stop()
 
     # Before connecting. Without a certificate list that exists on this
     # machine, logging in fails at the TLS handshake with an error about a

@@ -108,7 +108,7 @@ class ReceiveSupport:
             return f"py-cord {self.version}"
         return (
             f"py-cord {self.version}, sink contract adapted "
-            f"(reception is broken upstream, see {PYCORD_RECEIVE_ISSUE})"
+            f"to its rewritten receive path (see {PYCORD_RECEIVE_ISSUE})"
         )
 
 

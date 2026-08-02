@@ -8,7 +8,15 @@ from typing import Any
 
 import pytest
 
-from stenos.voice import DaveSupport, _status_name, dave_state, dave_support
+from stenos.voice import (
+    PYCORD_RECEIVE_ISSUE,
+    DaveSupport,
+    ReceiveSupport,
+    _status_name,
+    dave_state,
+    dave_support,
+    receive_support,
+)
 
 
 def _client(**connection: Any) -> SimpleNamespace:
@@ -119,3 +127,24 @@ def test_support_summary_without_a_reported_version() -> None:
     support = DaveSupport(available=True, version=None, protocol_version=1)
 
     assert "unknown version" in support.summary
+
+
+def test_a_pycord_needing_no_adaptation_is_reported_plainly() -> None:
+    assert ReceiveSupport(version="9.9.9", adapted=False).summary == "py-cord 9.9.9"
+
+
+def test_an_adapted_pycord_says_what_was_adapted_and_not_that_it_cannot_work() -> None:
+    # It said reception was broken upstream, which was true of a stock install
+    # and stopped being true once the decryption was repaired. Leaving it there
+    # told everyone their recording would fail while it was being written.
+    summary = ReceiveSupport(version="2.8.1", adapted=True).summary
+
+    assert "broken" not in summary
+    assert "sink contract adapted" in summary
+    assert PYCORD_RECEIVE_ISSUE in summary
+
+
+def test_the_installed_pycord_is_reported() -> None:
+    support = receive_support()
+
+    assert support.version in support.summary
