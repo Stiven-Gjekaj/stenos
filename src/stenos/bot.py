@@ -43,6 +43,7 @@ from .upstream import (
     quieten_stale_receive_warning,
     receive_repair_state,
     recover_decoded_audio,
+    recover_flushed_packets,
     skipped_frames,
     tolerate_double_stop,
     tolerate_undecodable_frames,
@@ -449,8 +450,18 @@ def build_bot(config: Config) -> StenosBot:
     return bot
 
 
+def _repaired(applied: bool) -> str:
+    """How a repair that reports only whether it was needed reads in the report."""
+    return "applied" if applied else "not needed"
+
+
 def describe_environment(config: Config) -> str:
-    """Report the resolved runtime configuration without connecting to Discord."""
+    """Report the resolved runtime configuration without connecting to Discord.
+
+    Reporting a repair applies it, which is the same thing asking about the
+    decryption has always done. The command exits immediately afterwards, so
+    nothing is left half prepared.
+    """
     resolved, available, detail = backend_status(config.whisper_backend)
     runtime = "frozen executable" if bundle_directory() is not None else "installation"
     lines = [
@@ -468,6 +479,8 @@ def describe_environment(config: Config) -> str:
         f"encryption       {dave_support().summary}",
         f"receive          {receive_support().summary}",
         f"receive repair   {receive_repair_state().summary}",
+        f"decode repair    {_repaired(recover_decoded_audio())}",
+        f"handoff repair   {_repaired(recover_flushed_packets())}",
         f"certificates     {certificate_bundle() or 'system default'}",
     ]
     return "\n".join(lines)
@@ -528,6 +541,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     # other order would wrap the version being replaced, and the tolerance
     # would go with it.
     recover_decoded_audio()
+
+    # py-cord drops every buffered packet but one at the first sign of a
+    # sequence gap, which is most likely where a stream starts.
+    recover_flushed_packets()
 
     # With reception repaired, what py-cord says about reception is out of date,
     # and the traceback its router prints at the end of a working recording

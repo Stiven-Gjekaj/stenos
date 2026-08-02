@@ -57,6 +57,8 @@ import logging
 import re
 import struct
 import warnings
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
 
@@ -67,6 +69,8 @@ __all__ = [
     "quieten_stale_receive_warning",
     "receive_repair_state",
     "recover_decoded_audio",
+    "recover_flushed_packets",
+    "recovered_frames",
     "skipped_frames",
     "tolerate_double_stop",
     "tolerate_undecodable_frames",
@@ -629,4 +633,173 @@ def recover_decoded_audio() -> bool:
     PacketDecoder._decode_packet = _build_decode_replacement()  # type: ignore[method-assign]
     _decode_replaced = True
     log.info("Repaired py-cord decoding, which decrypted audio it had already decoded.")
+    return True
+
+
+#: Where packets a flush would otherwise discard are kept. Set on py-cord's
+#: decoder, which assigns its own attributes freely and defines no slots.
+_HELD = "_stenos_held_packets"
+
+_recovered = 0
+_flush_patched = False
+
+
+def recovered_frames() -> int:
+    """Packets kept that a flush would otherwise have discarded."""
+    return _recovered
+
+
+@contextmanager
+def _quietly(name: str) -> Iterator[None]:
+    """Silence one logger, so probing for a defect does not report it happening.
+
+    py-cord warns as it discards the flushed packets. Provoking that on purpose
+    at startup, with no recording running, would describe a loss that never
+    occurred.
+    """
+    logger = logging.getLogger(name)
+    previous = logger.level
+    logger.setLevel(logging.CRITICAL)
+    try:
+        yield
+    finally:
+        logger.setLevel(previous)
+
+
+class _ProbeFlushBuffer:
+    """A buffer that will not pop, holding packets only a flush can reach."""
+
+    def __init__(self, packets: list[Any]) -> None:
+        self._packets = list(packets)
+
+    def __len__(self) -> int:
+        return len(self._packets)
+
+    def pop(self, *, timeout: float = 0) -> Any:
+        return None
+
+    def peek(self, **kwargs: Any) -> Any:
+        return None
+
+    def flush(self) -> list[Any]:
+        packets, self._packets = self._packets, []
+        return packets
+
+
+def _flush_delivers_everything(decoder_type: Any) -> bool:
+    """Whether every flushed packet reaches the caller, or only the first."""
+    packets = [_ProbePacket(), _ProbePacket(), _ProbePacket()]
+
+    decoder = decoder_type.__new__(decoder_type)
+    decoder._buffer = _ProbeFlushBuffer(packets)
+    # Named in the warning py-cord logs as it discards them, so it has to exist
+    # even though the probe silences that warning.
+    decoder.ssrc = _PROBE_SSRC
+
+    with _quietly("discord.opus"):
+        delivered = [decoder._get_next_packet(0) for _ in packets]
+    return delivered == packets
+
+
+def _build_flush_replacement(deque_type: Any) -> Any:
+    """py-cord's packet handoff with the flushed remainder kept rather than dropped."""
+
+    def _get_next_packet(self: Any, timeout: float) -> Any:
+        global _recovered
+
+        held = getattr(self, _HELD, None)
+        if held:
+            return held.popleft()
+
+        packet = self._buffer.pop(timeout=timeout)
+
+        if packet is None:
+            if not self._buffer:
+                return None
+
+            # The one changed branch. py-cord returns the first of these and
+            # drops the rest, having already moved the buffer's idea of what
+            # has been sent past all of them, so they cannot arrive again. They
+            # come back in sequence order, so handing them out one per call is
+            # the order they would have reached the sink in anyway.
+            packets = self._buffer.flush()
+            if len(packets) > 1:
+                setattr(self, _HELD, deque_type(packets[1:]))
+                _recovered += len(packets) - 1
+            return packets[0]
+
+        if not packet:
+            packet = self._make_fakepacket()
+        return packet
+
+    return _get_next_packet
+
+
+def _build_ready_replacement() -> Any:
+    """py-cord's readiness flag, counting the packets held outside the buffer."""
+
+    def _flag_ready_state(self: Any) -> None:
+        if self._buffer.peek() or getattr(self, _HELD, None):
+            self.router.waiter.register(self)
+        else:
+            self.router.waiter.unregister(self)
+
+    return _flag_ready_state
+
+
+def _forget_held(original: Any) -> Any:
+    """Wrap a method that empties the buffer so it empties the held packets too."""
+
+    def method(self: Any) -> Any:
+        held = getattr(self, _HELD, None)
+        if held:
+            held.clear()
+        return original(self)
+
+    return method
+
+
+def recover_flushed_packets() -> bool:
+    """Keep the audio a jitter buffer flush would otherwise throw away.
+
+    ``_get_next_packet`` flushes the whole buffer the first time the next packet
+    is out of order, returns the earliest of them, and drops every other one. The
+    flush has already advanced the buffer's last transmitted sequence to the last
+    of them, so what is dropped would be refused as stale if it were pushed back.
+    py-cord logs a warning naming the count as it happens.
+
+    Because the buffer is polled with no timeout, this fires at the first sign of
+    a gap rather than after any wait, and a gap is most likely where a stream
+    starts. The packets are held and handed out one per call instead.
+
+    The readiness flag is replaced with them, since it asks the buffer alone
+    whether there is more to come and would otherwise stop the router polling a
+    decoder that still has audio to give. Emptying the buffer has to empty the
+    held packets with it, or they outlive the recording that received them.
+    """
+    global _flush_patched
+    if _flush_patched:
+        return True
+
+    try:
+        from collections import deque
+
+        from discord.opus import PacketDecoder
+    except Exception as error:
+        log.debug("Cannot check how flushed packets are handled: %s", error)
+        return False
+
+    try:
+        if _flush_delivers_everything(PacketDecoder):
+            return False
+    except Exception as error:
+        log.debug("Could not probe the packet handoff, so leaving it alone: %s", error)
+        return False
+
+    PacketDecoder._get_next_packet = _build_flush_replacement(deque)  # type: ignore[method-assign]
+    PacketDecoder._flag_ready_state = _build_ready_replacement()  # type: ignore[method-assign]
+    PacketDecoder.reset = _forget_held(PacketDecoder.reset)  # type: ignore[method-assign]
+    PacketDecoder.destroy = _forget_held(PacketDecoder.destroy)  # type: ignore[method-assign]
+    _flush_patched = True
+    log.info("Repaired py-cord packet handoff, which discarded packets it had buffered.")
     return True

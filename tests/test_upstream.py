@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import warnings
+from collections import deque
 from collections.abc import Iterator
 from types import SimpleNamespace
 from typing import Any
@@ -26,6 +27,10 @@ _STOCK_DECRYPT_RTP = PacketDecryptor.decrypt_rtp
 _STOCK_RTPSIZE = PacketDecryptor._decrypt_rtp_aead_xchacha20_poly1305_rtpsize
 _STOCK_RUN = PacketRouter.run
 _STOCK_DECODE = PacketDecoder._decode_packet
+_STOCK_HANDOFF = PacketDecoder._get_next_packet
+_STOCK_READY = PacketDecoder._flag_ready_state
+_STOCK_RESET = PacketDecoder.reset
+_STOCK_DESTROY = PacketDecoder.destroy
 
 
 def _restore_stock_pycord() -> None:
@@ -40,6 +45,12 @@ def _restore_stock_pycord() -> None:
     )
     PacketRouter.run = _STOCK_RUN  # type: ignore[method-assign]
     PacketDecoder._decode_packet = _STOCK_DECODE  # type: ignore[method-assign]
+    upstream._flush_patched = False
+    upstream._recovered = 0
+    PacketDecoder._get_next_packet = _STOCK_HANDOFF  # type: ignore[method-assign]
+    PacketDecoder._flag_ready_state = _STOCK_READY  # type: ignore[method-assign]
+    PacketDecoder.reset = _STOCK_RESET  # type: ignore[method-assign]
+    PacketDecoder.destroy = _STOCK_DESTROY  # type: ignore[method-assign]
 
 
 @pytest.fixture(autouse=True)
@@ -359,11 +370,6 @@ def test_a_ready_session_still_decrypts_through_dave() -> None:
 # describes a problem the caller does not have.
 
 
-class Waiter:
-    def clear(self) -> None:
-        return None
-
-
 class Router:
     """The parts of a packet router py-cord's own run method touches."""
 
@@ -616,3 +622,182 @@ def test_tolerance_applied_after_the_replacement_covers_it() -> None:
 
     assert pcm == b""
     assert upstream.skipped_frames() == 1
+
+
+# The packet handoff. py-cord flushes the whole buffer at the first sign of a
+# sequence gap, returns the earliest packet, and drops the rest.
+
+
+class _ProbeFlushPacket:
+    """A packet with nothing on it but identity, which is all the handoff reads."""
+
+
+class Waiter:
+    """The parts of the router's waiter these repairs touch."""
+
+    def __init__(self) -> None:
+        self.items: list[Any] = []
+
+    def clear(self) -> None:
+        self.items.clear()
+
+    def register(self, item: Any) -> None:
+        self.items.append(item)
+
+    def unregister(self, item: Any) -> None:
+        if item in self.items:
+            self.items.remove(item)
+
+
+class EmptyBuffer:
+    def __len__(self) -> int:
+        return 0
+
+    def peek(self, **kwargs: Any) -> Any:
+        return None
+
+    def pop(self, *, timeout: float = 0) -> Any:
+        return None
+
+    def reset(self) -> None:
+        return None
+
+
+def _handoff_decoder(buffer: Any) -> Any:
+    """A PacketDecoder carrying only what the handoff and readiness flag read."""
+    decoder = PacketDecoder.__new__(PacketDecoder)
+    decoder._buffer = buffer
+    decoder.ssrc = upstream._PROBE_SSRC
+    decoder._last_seq = 4
+    decoder._last_ts = 96000
+    decoder.router = SimpleNamespace(waiter=Waiter())
+    return decoder
+
+
+def test_stock_pycord_still_discards_the_packets_it_flushed() -> None:
+    # The fourth tripwire. py-cord returns the earliest flushed packet and drops
+    # the others, having already moved the buffer past all of them.
+    assert upstream._flush_delivers_everything(PacketDecoder) is False, (
+        "py-cord now delivers every flushed packet. "
+        "The repair in stenos/upstream.py is obsolete and should be removed."
+    )
+
+
+def test_the_repair_delivers_every_flushed_packet_in_order() -> None:
+    assert upstream.recover_flushed_packets() is True
+
+    packets = [_ProbeFlushPacket(), _ProbeFlushPacket(), _ProbeFlushPacket()]
+    decoder = _handoff_decoder(upstream._ProbeFlushBuffer(packets))
+
+    assert [decoder._get_next_packet(0) for _ in packets] == packets
+    assert upstream.recovered_frames() == 2
+
+
+def test_a_lone_flushed_packet_is_not_counted_as_recovered() -> None:
+    upstream.recover_flushed_packets()
+    decoder = _handoff_decoder(upstream._ProbeFlushBuffer([_ProbeFlushPacket()]))
+
+    decoder._get_next_packet(0)
+
+    assert upstream.recovered_frames() == 0
+
+
+def test_a_packet_the_buffer_releases_is_passed_straight_through() -> None:
+    upstream.recover_flushed_packets()
+    released = _ProbeFlushPacket()
+    decoder = _handoff_decoder(SimpleNamespace(pop=lambda *, timeout=0: released))
+
+    assert decoder._get_next_packet(0) is released
+
+
+def test_an_empty_buffer_still_yields_nothing() -> None:
+    upstream.recover_flushed_packets()
+
+    assert _handoff_decoder(EmptyBuffer())._get_next_packet(0) is None
+
+
+def test_a_decoder_holding_packets_keeps_being_polled() -> None:
+    # Without this the readiness flag asks the buffer alone, unregisters a
+    # decoder whose buffer is empty, and the held audio is never collected.
+    upstream.recover_flushed_packets()
+    decoder = _handoff_decoder(EmptyBuffer())
+
+    decoder._flag_ready_state()
+    assert decoder.router.waiter.items == []
+
+    setattr(decoder, upstream._HELD, deque([_ProbeFlushPacket()]))
+    decoder._flag_ready_state()
+    assert decoder.router.waiter.items == [decoder]
+
+
+def test_emptying_the_decoder_empties_what_it_was_holding() -> None:
+    # Held packets belong to the recording that received them, not the next one.
+    upstream.recover_flushed_packets()
+    decoder = _handoff_decoder(EmptyBuffer())
+    decoder._decoder = None
+    held = deque([_ProbeFlushPacket()])
+    setattr(decoder, upstream._HELD, held)
+
+    decoder.destroy()
+
+    assert not held
+
+
+def test_forgetting_held_packets_still_runs_what_it_wraps() -> None:
+    calls: list[str] = []
+    wrapped = upstream._forget_held(lambda self: calls.append("original"))
+    holder = SimpleNamespace()
+    held = deque(["a", "b"])
+    setattr(holder, upstream._HELD, held)
+
+    wrapped(holder)
+
+    assert calls == ["original"]
+    assert not held
+
+
+def test_repairing_the_handoff_happens_once() -> None:
+    assert upstream.recover_flushed_packets() is True
+    replaced = PacketDecoder._get_next_packet
+
+    assert upstream.recover_flushed_packets() is True
+    assert PacketDecoder._get_next_packet is replaced
+
+
+def test_a_pycord_that_delivers_everything_is_left_alone() -> None:
+    def complete(self: Any, timeout: float) -> Any:
+        packet = self._buffer.pop(timeout=timeout)
+        if packet is None and len(self._buffer):
+            self._held = deque(self._buffer.flush())
+        if getattr(self, "_held", None):
+            return self._held.popleft()
+        return packet
+
+    PacketDecoder._get_next_packet = complete  # type: ignore[method-assign]
+
+    assert upstream.recover_flushed_packets() is False
+    assert PacketDecoder._get_next_packet is complete
+
+
+def test_a_handoff_probe_that_raises_leaves_pycord_alone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def explode(*args: object, **kwargs: object) -> bool:
+        raise RuntimeError("unfamiliar buffer")
+
+    monkeypatch.setattr(upstream, "_flush_delivers_everything", explode)
+
+    assert upstream.recover_flushed_packets() is False
+    assert PacketDecoder._get_next_packet is _STOCK_HANDOFF
+
+
+def test_probing_does_not_report_a_loss_that_did_not_happen(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # The probe provokes the defect deliberately. py-cord warns as it discards
+    # the packets, and at startup, with no recording running, that warning would
+    # describe a loss of nothing.
+    with caplog.at_level(logging.WARNING, logger="discord.opus"):
+        upstream._flush_delivers_everything(PacketDecoder)
+
+    assert "were lost being flushed" not in caplog.text
