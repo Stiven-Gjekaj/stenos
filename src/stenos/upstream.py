@@ -736,7 +736,28 @@ def _build_flush_replacement(deque_type: Any) -> Any:
 
 
 def _build_ready_replacement() -> Any:
-    """py-cord's readiness flag, counting the packets held outside the buffer."""
+    """py-cord's readiness flag, counting the packets held outside the buffer.
+
+    A straight extension of its condition and nothing more, deliberately. The
+    waiter's register appends without checking whether the decoder is already
+    listed, and this is called after every packet pushed and every packet
+    popped, so the list holds one entry per push since the last time the router
+    drained. That looks like a leak and is not one.
+
+    Measured against a real jitter buffer: with the router keeping up the list
+    peaks at one entry. Four loops behind, it peaks at ten, which is the
+    buffer's own maximum size. Two hundred pushes with no drain leave 199
+    entries, one drain pass takes that to sixteen and a second to zero, because
+    iterating the list is itself what unregisters. The router only fails to
+    catch up when packets outpace drains by orders of magnitude, and by then the
+    buffer is discarding almost everything, which is the larger problem.
+
+    The duplicate entries are also what recovers the backlog, since the router
+    pops once per entry. Removing them would make it drain one packet per loop
+    and take longer to catch up. So this leaves the count alone, and the burst
+    delivery it causes no longer matters now that segments are timed by the
+    media clock the packets carry rather than by when they arrived.
+    """
 
     def _flag_ready_state(self: Any) -> None:
         if self._buffer.peek() or getattr(self, _HELD, None):
