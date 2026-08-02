@@ -132,6 +132,10 @@ def test_environment_report_covers_the_resolved_runtime(tmp_path: Path) -> None:
     # Both libraries whose absence only shows up as audio that never arrives.
     assert "encryption" in report
     assert "receive repair" in report
+    # Names the py-cord version and whether its sinks needed adapting, which
+    # is why a recording can work here and nowhere else.
+    assert "receive " in report
+    assert "certificates" in report
 
 
 def record_group(bot: Any) -> Any:

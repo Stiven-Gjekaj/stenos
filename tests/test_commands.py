@@ -417,3 +417,54 @@ async def test_stop_reports_an_unexpected_transcription_failure(
     message, _attachment = stop_ctx.followup.sent[0]
     assert "transcription failed" in message
     assert "OSError: disk full" in message
+
+
+async def test_start_reports_a_failure_rather_than_going_quiet(tmp_path: Path) -> None:
+    # A recording that cannot start used to leave the command unanswered and a
+    # session registered, so the bot went on describing a recording that had
+    # never begun.
+    bot = make_bot(tmp_path)
+    channel = FakeVoiceChannel(2, "general", [])
+    author = FakeMember(11, "Alpha", channel=channel)
+    channel.members = [author]
+
+    def refuse(sink: Any, callback: Any) -> None:
+        raise AttributeError("'TimestampedSink' object has no attribute '__sink_listeners__'")
+
+    channel.voice_client.start_recording = refuse  # type: ignore[method-assign]
+
+    ctx = FakeContext(1, author)
+    await command(bot, "start")(ctx)
+
+    message, ephemeral = ctx.responses[0]
+    assert "Could not start recording" in message
+    assert "3139" in message
+    assert ephemeral is True
+    assert bot.sessions == {}
+    assert channel.voice_client.disconnected is True
+
+
+async def test_stop_answers_even_when_stopping_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        bot_module, "load_backend", lambda *a, **k: MockBackend(texts=["so about the pipeline"])
+    )
+    bot = make_bot(tmp_path)
+    channel = FakeVoiceChannel(2, "general", [])
+    author = FakeMember(11, "Alpha", channel=channel)
+    channel.members = [author]
+    await command(bot, "start")(FakeContext(1, author))
+    feed(bot.sessions[1])
+
+    def refuse() -> None:
+        raise RuntimeError("You are not recording")
+
+    channel.voice_client.stop_recording = refuse  # type: ignore[method-assign]
+
+    stop_ctx = FakeContext(1, author)
+    await command(bot, "stop")(stop_ctx)
+
+    # Answered rather than left thinking, and the session released either way.
+    assert stop_ctx.followup.sent
+    assert bot.sessions == {}

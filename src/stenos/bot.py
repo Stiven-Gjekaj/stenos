@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import logging
 import platform
 import time
@@ -37,7 +38,7 @@ from .transcript import (
     write_transcript,
 )
 from .upstream import apply_receive_repair, receive_repair_state
-from .voice import dave_state, dave_support
+from .voice import PYCORD_RECEIVE_ISSUE, dave_state, dave_support, receive_support
 
 __all__ = [
     "RecordingResult",
@@ -254,9 +255,26 @@ def register_commands(bot: StenosBot, guild_ids: list[int] | None = None) -> Any
             sink=sink,
         )
         session.remember_all(getattr(channel, "members", []))
-        bot.sessions[session.guild_id] = session
 
-        voice_client.start_recording(sink, _on_recording_finished)
+        # Reported rather than raised, and registered only once recording has
+        # actually begun. A failure here used to leave the command unanswered
+        # and a session behind, so the bot went on describing a recording that
+        # had never started.
+        try:
+            voice_client.start_recording(sink, _on_recording_finished)
+        except Exception as error:
+            log.exception("Could not start recording")
+            with contextlib.suppress(Exception):
+                await voice_client.disconnect()
+            await ctx.respond(
+                f"Could not start recording: {error.__class__.__name__}: {error}. "
+                f"Voice reception is currently broken in {receive_support().version}, "
+                f"tracked at {PYCORD_RECEIVE_ISSUE}.",
+                ephemeral=True,
+            )
+            return
+
+        bot.sessions[session.guild_id] = session
 
         # Announced unconditionally and non-ephemerally. Recording law varies
         # by jurisdiction and silent recording is never the intent.
@@ -273,12 +291,19 @@ def register_commands(bot: StenosBot, guild_ids: list[int] | None = None) -> Any
             return
 
         await ctx.defer()
-        session.voice_client.stop_recording()
+        # The caller is waiting on a deferred response, so nothing between here
+        # and the reply may raise. Stopping a recording that never started
+        # raises, which used to leave the command answering forever.
+        try:
+            session.voice_client.stop_recording()
+        except Exception as error:
+            log.warning("Stopping the recording failed: %s", error)
         session.sink.cleanup()
         # Read before disconnecting. The connection state is gone afterwards,
         # and it is the only account of why a recording captured nothing.
         dave = dave_state(session.voice_client)
-        await session.voice_client.disconnect()
+        with contextlib.suppress(Exception):
+            await session.voice_client.disconnect()
 
         # Checked before the backend is loaded, so a recording that captured
         # nothing does not wait on a model that has nothing to do.
@@ -397,6 +422,7 @@ def describe_environment(config: Config) -> str:
         f"keep audio       {config.keep_audio}",
         f"opus loaded      {ensure_opus()}",
         f"encryption       {dave_support().summary}",
+        f"receive          {receive_support().summary}",
         f"receive repair   {receive_repair_state().summary}",
         f"certificates     {certificate_bundle() or 'system default'}",
     ]
