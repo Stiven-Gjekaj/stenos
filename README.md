@@ -9,7 +9,7 @@ _One timestamped, speaker-attributed transcript. No audio leaves the machine_
 <p align="center">
   <img src="https://img.shields.io/badge/Python-3.11%20to%203.13-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python 3.11 to 3.13"/>
   <img src="https://img.shields.io/badge/dependencies-3_direct-007ec6?style=for-the-badge" alt="Three direct runtime dependencies"/>
-  <img src="https://img.shields.io/badge/tests-382_passing-427819?style=for-the-badge" alt="382 tests passing"/>
+  <img src="https://img.shields.io/badge/tests-392_passing-427819?style=for-the-badge" alt="392 tests passing"/>
 </p>
 
 <p align="center">

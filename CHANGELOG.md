@@ -8,6 +8,98 @@ of the [README](README.md). A release covers a whole series: every commit
 sharing an `X.N.V` belongs to it, and the tag is cut at the last of them. The
 sections below are therefore headed by the series rather than by one version.
 
+## 0.1.4 (2026-08-02)
+
+The release in which a recording first contained the call. Everything below was
+found by running the bot against a real voice channel; none of it was visible
+from the test suite, which was passing throughout.
+
+### Fixed
+
+- **py-cord removed the RTP header extension twice, and no audio survived it.**
+  On a call carrying encryption, which since March 2026 is every call, the
+  transport decryption removes the extension using a constant that is right only
+  when the sender wrote exactly two extension words, and `decrypt_rtp` then
+  applies the offset a second time to the opus frame the session has already
+  returned.
+
+  A packet carrying two extension words reaches the decoder missing the first
+  eight bytes of its audio and is rejected as a corrupted stream. Every other
+  size loses the wrong bytes before the session sees them, fails to decrypt, and
+  is replaced with opus silence. There is no extension size at which the audio
+  survives, which is why a recording made against a stock 2.8.1 is silence
+  interrupted by decode failures. A live recording that produced 927 decode
+  failures in forty seconds now produces none.
+
+  The offset is applied once, before the session sees the payload, and is probed
+  at four different extension sizes rather than at the one Discord happens to
+  write, since a probe using only that would call the broken decryptor sound.
+
+- **Segments were timed by delivery rather than by the audio.** py-cord 2.8
+  drains a jitter buffer into the sink and covers gaps with synthesised packets,
+  so a burst delivers several seconds of speech in a fraction of a second and
+  arrival time stops tracking speech. Segments timed that way ran longer than
+  the span they were received in and overlapped the segments after them.
+
+  Every packet carries an RTP timestamp counting samples, which advances with
+  the audio whatever the delivery does. Segments are now placed and split on
+  that, measured from each participant's first packet because the count starts
+  at a value unrelated between one participant and the next. Arrival still ties
+  one participant's stream to another's, and takes over again if a stream
+  restarts on a new count.
+
+- **The sink could not be registered at all.** py-cord 2.8 rewrote the receive
+  path and left every one of its own sinks behind, including `WaveSink`. The
+  router reads three members that no sink in that release defines, so starting a
+  recording raised before any audio moved. It also stopped calling `init` on the
+  sink, so the first packet killed the router thread on an assertion.
+
+- **A recording that captured nothing reported the wrong length.** The duration
+  spanned the first arrival to the last, but the audio a packet carries extends
+  past the moment it arrived, and with a buffer in front of the sink it can
+  extend well past it.
+
+- **One malformed frame discarded the rest of the call.** py-cord let an opus
+  decode failure out of the router thread, which stopped the thread, which
+  stopped the recording. A frame that will not decode is now skipped and
+  counted, and `/record stop` says how many were lost.
+
+- **`/record start` failed with an unknown interaction.** Connecting to voice
+  takes about five seconds and an interaction token expires after three, so the
+  reply always arrived too late. The command is now acknowledged before the
+  connection is attempted, and a failure to start recording is reported rather
+  than left as a silent timeout.
+
+- **The standalone executables had no certificate list.** A frozen `ssl` looks
+  where the build machine kept its certificates, which is nowhere on the
+  machine that runs the executable, so logging in failed at the TLS handshake
+  with an error about a missing local issuer. `certifi` is now a dependency and
+  its bundle is selected before connecting; a build whose certificates resolve
+  outside the bundle fails in continuous integration.
+
+- **The Apple Silicon extra could not be installed.** With numpy uncapped the
+  resolver backtracked to a 2021 numba that supports no Python this project
+  runs on, so `uv sync --extra mlx` failed to build. Nothing in continuous
+  integration had ever installed that extra; the compatibility workflow now
+  does, on every supported Python.
+
+- **A working recording ended with a traceback, and said it could not work.**
+  py-cord's router stops a recording its own caller stopped a moment earlier
+  and lets the resulting exception out of a thread with nothing to catch it. It
+  also warns twice a recording that reception is broken, which stopped being
+  true once the decryption was repaired, and logs an ordinary RTCP sender
+  report as an unexpected packet several times a minute.
+
+### Added
+
+- **The sink is checked against py-cord's own reader.** A test now constructs
+  the real `AudioReader` around it, so a change to what the router expects
+  fails in continuous integration rather than on a voice channel. It caught a
+  real defect the first time it ran.
+
+- **`--check` reports the receive path.** Which py-cord is installed, whether
+  its sink contract needed adapting, and which repairs were applied to it.
+
 ## 0.1.3 (2026-08-01)
 
 ### Added
