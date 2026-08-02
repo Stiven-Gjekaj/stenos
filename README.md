@@ -9,7 +9,7 @@ _One timestamped, speaker-attributed transcript. No audio leaves the machine_
 <p align="center">
   <img src="https://img.shields.io/badge/Python-3.11%20to%203.13-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python 3.11 to 3.13"/>
   <img src="https://img.shields.io/badge/dependencies-3_direct-007ec6?style=for-the-badge" alt="Three direct runtime dependencies"/>
-  <img src="https://img.shields.io/badge/tests-344_passing-427819?style=for-the-badge" alt="344 tests passing"/>
+  <img src="https://img.shields.io/badge/tests-372_passing-427819?style=for-the-badge" alt="372 tests passing"/>
 </p>
 
 <p align="center">
@@ -88,7 +88,7 @@ fanless laptop that will thermally throttle under sustained inference.
 - Display names cached as people join, so someone who leaves early is still named
 - Start and stop announced in the text channel, always
 - A recording that captured nothing says which of the two reasons applied
-- A py-cord defect that discards unencrypted audio detected and repaired
+- Two py-cord defects that lose received audio detected and repaired
 
 </td>
 <td width="50%" valign="top">
@@ -173,8 +173,8 @@ stenos                    # start the bot
 `--check` is the first thing to inspect when voice receive misbehaves. Without
 connecting to Discord it reports whether libopus loaded, whether the
 transcription backend can actually be imported, whether the end-to-end
-encryption library is present, and whether the py-cord receive defect described
-under [known limitations](#known-limitations) was found and repaired.
+encryption library is present, and whether the py-cord receive defects described
+under [known limitations](#known-limitations) were found and repaired.
 
 ---
 
@@ -327,18 +327,33 @@ reports whether the encryption library is present, `/record status` reports the
 negotiated session state while nothing has arrived yet, and `/record stop`
 explains which of the two happened instead of posting a transcript with no lines.
 
-**A defect in py-cord 2.8.1 is repaired at startup.** Its `decrypt_rtp` performs
-the transport decryption into a local, then returns a field that only the
-encryption branch ever assigns, so a call carrying no encryption records nothing
-at all. Stenos restores the discarded payload, and only in the one state where no
-encryption can have been applied: a connection with no session. Every other state
-keeps py-cord's behaviour untouched.
+**Two defects in py-cord 2.8.1 are repaired at startup.** The first discards
+received audio on a call carrying no encryption: `decrypt_rtp` performs the
+transport decryption into a local, then returns a field that only the encryption
+branch ever assigns, so the caller reads back nothing and drops the packet.
 
-Whether to repair is decided by running the decryptor, not by comparing version
-numbers, so a py-cord that has fixed this is left alone and the repair becomes
-inert rather than needing to be noticed and removed. `--check` reports the
-decision on the `receive repair` line, and the test suite fails with a message
-asking for the module to be deleted once the defect is gone.
+The second loses the audio on a call that does carry encryption, which since
+March 2026 is every call. The RTP header extension is removed twice, once by the
+transport decryption using a constant that is right only when the sender wrote
+exactly two extension words, and again afterwards from the opus frame the session
+has already returned. Two extension words survive as far as the decoder and then
+arrive missing their first eight bytes, which the decoder rejects as a corrupted
+stream. Every other size loses the wrong bytes before the session sees them, so
+the packet fails to decrypt and becomes opus silence. There is no extension size
+at which the audio survives, which is why a recording made against a stock 2.8.1
+is silence interrupted by decode failures.
+
+Stenos repairs both, and no more than that. The first is confined to the one
+state where no encryption can have been applied: a connection with no session.
+The second changes which bytes are removed and when, never whether decryption
+happens. Every other state keeps py-cord's behaviour untouched.
+
+Whether to repair is decided by running the decryptor at four different extension
+sizes, not by comparing version numbers, so a py-cord that has fixed either is
+left alone and that repair becomes inert rather than needing to be noticed and
+removed. `--check` reports the decision on the `receive repair` line, and the
+test suite fails with a message asking for the module to be deleted once the
+defects are gone.
 
 **No live transcription.** Transcription is deliberately post-call. Running
 inference during a call on a fanless machine causes thermal throttling that
@@ -353,16 +368,16 @@ becomes text, and text becomes one ordered transcript.
 
 | Stage | File | Lines | Responsibility |
 | --- | --- | --- | --- |
-| **Receiving** | sink.py | 238 | Timestamps packets on arrival and splits segments on silence; loads libopus |
-| **Transport** | voice.py | 160 | Reads the end-to-end encryption state a voice connection negotiated |
-| **Transport** | upstream.py | 184 | Restores the received audio py-cord 2.8.1 discards, when it does |
+| **Receiving** | sink.py | 300 | Timestamps packets on arrival and splits segments on silence; loads libopus |
+| **Transport** | voice.py | 205 | Reads the end-to-end encryption state a voice connection negotiated |
+| **Transport** | upstream.py | 381 | Repairs the two py-cord 2.8.1 defects that lose received audio, when they are present |
 | **Conversion** | audio.py | 132 | Downmixes and resamples to 16 kHz mono, discarding fragments too short to carry speech |
 | **Verification** | integrity.py | 109 | Separates a recording that captured nothing from a call in which nobody spoke |
 | **Transcription** | transcribe.py | 283 | Backend protocol, mlx and faster-whisper implementations, and the segment loop |
 | **Output** | transcript.py | 203 | Merges, orders, and writes the transcript and its sidecar portably |
-| **Commands** | bot.py | 457 | Slash commands, session state, the offline pipeline, and the CLI |
-| **Configuration** | config.py | 221 | Validated environment parsing and platform-aware backend resolution |
-| **Total** | **11 files** | **2013** | Plus 3231 lines of tests |
+| **Commands** | bot.py | 529 | Slash commands, session state, the offline pipeline, and the CLI |
+| **Configuration** | config.py | 258 | Validated environment parsing and platform-aware backend resolution |
+| **Total** | **11 files** | **2426** | Plus 3660 lines of tests |
 
 ```
 src/stenos/      the bot (sink, transport, audio, transcription, output, commands)
