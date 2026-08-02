@@ -17,11 +17,17 @@ from dataclasses import dataclass
 from typing import Any
 
 __all__ = [
+    "PYCORD_RECEIVE_ISSUE",
     "DaveState",
     "DaveSupport",
+    "ReceiveSupport",
     "dave_state",
     "dave_support",
+    "receive_support",
 ]
+
+#: Where py-cord tracks the state of voice reception.
+PYCORD_RECEIVE_ISSUE = "https://github.com/Pycord-Development/pycord/issues/3139"
 
 
 def _davey() -> Any | None:
@@ -86,6 +92,45 @@ class DaveState:
         if not self.session_present:
             return f"no session (negotiated protocol {self.negotiated_version})"
         return f"session {self.status}, protocol {self.negotiated_version}, ready {self.ready}"
+
+
+@dataclass(frozen=True, slots=True)
+class ReceiveSupport:
+    """What the installed py-cord can do about receiving audio."""
+
+    version: str
+    adapted: bool
+
+    @property
+    def summary(self) -> str:
+        """One line naming the version and whether its sinks needed adapting."""
+        if not self.adapted:
+            return f"py-cord {self.version}"
+        return (
+            f"py-cord {self.version}, sink contract adapted "
+            f"(reception is broken upstream, see {PYCORD_RECEIVE_ISSUE})"
+        )
+
+
+def receive_support() -> ReceiveSupport:
+    """Report whether this py-cord can register a sink without help.
+
+    py-cord 2.8 rewrote the receive path and left every one of its own sinks
+    behind, so a recording cannot start on a stock sink at all. This sink
+    supplies what the router asks for, and reporting that says why the version
+    number alone would not explain a recording that works here and nowhere
+    else.
+    """
+    try:
+        import discord
+        from discord.sinks import Sink
+    except Exception:
+        return ReceiveSupport(version="unknown", adapted=False)
+
+    return ReceiveSupport(
+        version=getattr(discord, "__version__", "unknown"),
+        adapted=not hasattr(Sink, "__sink_listeners__"),
+    )
 
 
 def dave_support() -> DaveSupport:
