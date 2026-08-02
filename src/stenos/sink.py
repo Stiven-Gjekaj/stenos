@@ -19,7 +19,7 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, ClassVar
 
 import discord.opus
 from discord.sinks import Filters, Sink
@@ -131,6 +131,27 @@ def ensure_opus(path: str | None = None) -> bool:
     return any(_try_load(candidate) for candidate in opus_library_candidates())
 
 
+def _decoded(data: Any, user: Any) -> tuple[bytes | None, int | None]:
+    """Normalise the two calling conventions py-cord has used for a sink write.
+
+    Before 2.8 the router passed decoded audio and an integer user identifier.
+    From 2.8 it passes a VoiceData carrying the audio, and the member object it
+    came from rather than an identifier. Both are read here, so the sink works
+    against either release and so tests that call write directly keep saying
+    what they were written to say.
+
+    Either half may be absent. A packet with no audio in it is nothing to
+    record, and one whose speaker is unknown cannot be attributed, so each is
+    reported as None for the caller to handle.
+    """
+    payload = getattr(data, "pcm", data)
+    if not isinstance(payload, bytes | bytearray | memoryview) or not payload:
+        return None, None
+
+    speaker = getattr(user, "id", user)
+    return bytes(payload), speaker if isinstance(speaker, int) else None
+
+
 @dataclass(slots=True)
 class Segment:
     """One continuous stretch of speech from a single participant.
@@ -159,7 +180,18 @@ class TimestampedSink(Sink):
 
     The clock is injectable so segmentation can be driven by synthetic packet
     sequences in tests without sleeping.
+
+    py-cord 2.8 rewrote the receive path and left its sinks behind. The router
+    reads three members that no sink in that release defines, its own included,
+    so starting a recording raises before any audio moves. They are supplied
+    here, and the write signature accepts both the old calling convention and
+    the new one, so this sink works either side of that change.
     """
+
+    #: Sink events to subscribe to, read by the router when a recording starts.
+    #: Audio does not arrive this way, it arrives through write, so subscribing
+    #: to nothing is both correct and sufficient.
+    __sink_listeners__: ClassVar[list[tuple[str, str]]] = []
 
     def __init__(
         self,
@@ -181,24 +213,48 @@ class TimestampedSink(Sink):
         self._last_packet: dict[int, float] = {}
         self._packet_count = 0
         self._last_arrival: float | None = None
+        self._unattributed = 0
+
+    def walk_children(self) -> list[Sink]:
+        """Child sinks to register alongside this one. There are none."""
+        return []
+
+    def is_opus(self) -> bool:
+        """Whether to receive opus frames rather than decoded audio.
+
+        False, so py-cord decodes each packet and write receives the linear
+        audio this sink measures durations in.
+        """
+        return False
 
     @Filters.container
-    def write(self, data: bytes, user: int) -> None:
+    def write(self, data: Any, user: Any) -> None:
         """Buffer one decoded packet, opening a new segment after a silent gap."""
+        payload, speaker = _decoded(data, user)
+        if payload is None:
+            return
+        if speaker is None:
+            # Audio from nobody identifiable cannot be attributed, and guessing
+            # would put words in someone's mouth. Counted so a recording can
+            # report having discarded it rather than quietly losing it.
+            with self._lock:
+                self._unattributed += 1
+            return
+
         now = self._clock()
         with self._lock:
             if self._origin is None:
                 self._origin = now
 
-            segment = self._open.get(user)
-            previous = self._last_packet.get(user)
+            segment = self._open.get(speaker)
+            previous = self._last_packet.get(speaker)
             if segment is None or previous is None or (now - previous) > self.segment_gap:
-                segment = Segment(user_id=user, start=now - self._origin)
-                self._open[user] = segment
+                segment = Segment(user_id=speaker, start=now - self._origin)
+                self._open[speaker] = segment
                 self._segments.append(segment)
 
-            segment.pcm.extend(data)
-            self._last_packet[user] = now
+            segment.pcm.extend(payload)
+            self._last_packet[speaker] = now
             self._last_arrival = now
             self._packet_count += 1
 
@@ -222,6 +278,12 @@ class TimestampedSink(Sink):
         """Number of packets received across all participants."""
         with self._lock:
             return self._packet_count
+
+    @property
+    def unattributed_packets(self) -> int:
+        """Packets carrying audio that no known speaker could be matched to."""
+        with self._lock:
+            return self._unattributed
 
     @property
     def user_ids(self) -> frozenset[int]:
