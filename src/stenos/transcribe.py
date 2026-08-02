@@ -14,11 +14,13 @@ from typing import Any, Protocol
 import numpy as np
 import numpy.typing as npt
 
-from .audio import segment_to_audio
+from .audio import SILENT_RMS, loudness, segment_to_audio
 from .config import BACKEND_AUTO, BACKEND_MLX, resolve_backend
 from .sink import Segment
 
 __all__ = [
+    "MAX_DISTINCT_RATIO",
+    "MIN_WORDS_FOR_REPETITION",
     "MLX_MODEL_REPOS",
     "BackendUnavailableError",
     "FasterWhisperBackend",
@@ -27,10 +29,24 @@ __all__ = [
     "ProgressCallback",
     "TranscribedSegment",
     "TranscriptionBackend",
+    "invented_reason",
     "load_backend",
     "mlx_repo_for",
     "transcribe_segments",
 ]
+
+#: Fewer words than this cannot establish a loop, and short lists that repeat
+#: honestly, such as counting out loud, would look like one.
+MIN_WORDS_FOR_REPETITION = 12
+
+#: Distinct words over total, below which the text is repeating rather than
+#: saying anything. The two loops captured from real calls sit at 0.004 and
+#: 0.077; ordinary speech from the same calls sits above 0.6.
+MAX_DISTINCT_RATIO = 0.25
+
+#: Trimmed from each word before counting, so a phrase punctuated differently
+#: on each repetition still reads as the same word.
+_TRIMMED = ".,!?;:\"'-"
 
 #: Hugging Face repositories holding the converted weights for each model size.
 #: The names are not uniformly suffixed upstream, so the mapping is explicit
@@ -76,12 +92,47 @@ class TranscriptionBackend(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class TranscribedSegment:
-    """One segment paired with the text recognised in it."""
+    """One segment paired with the text recognised in it.
+
+    ``suppressed`` names why the text cannot be what was said, when it cannot.
+    The text is kept either way, so a transcript that lost a line to this can be
+    checked against the sidecar rather than taken on trust.
+    """
 
     user_id: int
     start: float
     duration: float
     text: str
+    suppressed: str | None = None
+
+
+def invented_reason(text: str, audio: npt.NDArray[np.float32]) -> str | None:
+    """Why this text cannot be what was said, or None if it might be.
+
+    Whisper does not decline to transcribe. Given audio with nothing in it, it
+    returns a confident sentence, and given a fragment it can fall into
+    repeating one phrase until the segment runs out. Both were produced by real
+    calls: 250 repetitions of a single word over two and a half seconds, and a
+    stock courtesy over opus silence.
+
+    Silence is judged from the audio rather than from a list of known phrases,
+    which would be fragile and would only work in English. Repetition is judged
+    from the text, because audio can legitimately be a person repeating
+    themselves and the giveaway is the shape of what came back.
+    """
+    if not text.strip():
+        return None
+
+    if loudness(audio) < SILENT_RMS:
+        return "silence"
+
+    words = text.split()
+    if len(words) >= MIN_WORDS_FOR_REPETITION:
+        distinct = {word.strip(_TRIMMED).casefold() for word in words}
+        if len(distinct) / len(words) < MAX_DISTINCT_RATIO:
+            return "repetition"
+
+    return None
 
 
 @dataclass
@@ -260,7 +311,9 @@ def transcribe_segments(
     """Transcribe every segment in order, reporting progress as each completes.
 
     Empty results are retained here so the sidecar records the full segment set.
-    They are dropped when the transcript is merged.
+    They are dropped when the transcript is merged, as is text this decides the
+    model invented, which is marked here because this is the only point at which
+    the audio and the text are both in hand.
     """
     ordered = list(segments)
     total = len(ordered)
@@ -275,6 +328,7 @@ def transcribe_segments(
                 start=segment.start,
                 duration=segment.duration,
                 text=text,
+                suppressed=invented_reason(text, audio),
             )
         )
         if progress is not None:

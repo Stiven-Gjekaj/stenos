@@ -22,8 +22,10 @@ from stenos.transcribe import MockBackend
 
 RECORDED_AT = datetime(2026, 8, 1, 16, 14, 43, tzinfo=UTC)
 
-#: One 20 ms Discord voice frame of non-silent audio.
-FRAME = b"\x01\x00" * (BYTES_PER_SECOND // 100)
+#: One 20 ms Discord voice frame of audio. The amplitude matters as well as
+#: the length: transcription suppresses text over audio with nothing in it, so
+#: a fixture standing in for speech has to be loud enough to be speech.
+FRAME = b"\x00\x04" * (BYTES_PER_SECOND // 100)
 
 SPEAKERS = {11: "Alpha", 22: "Bravo", 33: "Dëlta 🎧"}
 

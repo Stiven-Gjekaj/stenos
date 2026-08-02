@@ -126,7 +126,9 @@ def merge(
     """Flatten every speaker's segments into one ordered transcript.
 
     Segments that produced no text are dropped here rather than during
-    transcription, so the sidecar still records them.
+    transcription, so the sidecar still records them. So is text the model
+    invented, for the same reason: the transcript should read as what was said,
+    and the sidecar keeps what was discarded and why.
     """
     lines = [
         TranscriptLine(
@@ -136,7 +138,7 @@ def merge(
             text=result.text.strip(),
         )
         for result in results
-        if result.text.strip()
+        if result.text.strip() and not result.suppressed
     ]
     return sorted(lines, key=lambda line: (line.start, line.user_id))
 
@@ -182,17 +184,26 @@ def build_sidecar(
         "backend": backend,
         "model": model,
         "speakers": {str(user_id): name for user_id, name in sorted(names.items())},
-        "segments": [
-            {
-                "user_id": result.user_id,
-                "speaker": resolve_speaker(result.user_id, names),
-                "start": round(result.start, 3),
-                "duration": round(result.duration, 3),
-                "text": result.text,
-            }
-            for result in ordered
-        ],
+        "segments": [_sidecar_segment(result, names) for result in ordered],
     }
+
+
+def _sidecar_segment(result: TranscribedSegment, names: Mapping[int, str]) -> dict[str, Any]:
+    """One segment as the sidecar records it.
+
+    The suppression reason appears only on the segments that carry one, so a
+    reader written against an earlier sidecar sees no change.
+    """
+    segment: dict[str, Any] = {
+        "user_id": result.user_id,
+        "speaker": resolve_speaker(result.user_id, names),
+        "start": round(result.start, 3),
+        "duration": round(result.duration, 3),
+        "text": result.text,
+    }
+    if result.suppressed:
+        segment["suppressed"] = result.suppressed
+    return segment
 
 
 def write_sidecar(path: Path, payload: Mapping[str, Any]) -> Path:

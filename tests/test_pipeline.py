@@ -16,8 +16,10 @@ from stenos.transcribe import MockBackend
 
 RECORDED_AT = datetime(2026, 8, 1, 16, 14, 43, tzinfo=UTC)
 
-#: One Discord voice frame is 20 ms of audio.
-FRAME = b"\x01\x00" * (BYTES_PER_SECOND // 100)
+#: One Discord voice frame is 20 ms of audio. The amplitude matters as well as
+#: the length: transcription suppresses text over audio with nothing in it, so
+#: a fixture standing in for speech has to be loud enough to be speech.
+FRAME = b"\x00\x04" * (BYTES_PER_SECOND // 100)
 
 
 class ScriptedClock:
@@ -263,3 +265,23 @@ def test_unknown_speaker_is_labelled(tmp_path: Path) -> None:
     result = run(tmp_path, speech(0.0, 77), {}, backend=MockBackend(texts=["anonymous"]))
 
     assert "Unknown (77)" in result.transcript_path.read_text(encoding="utf-8")
+
+
+def test_invented_text_leaves_the_transcript_but_stays_in_the_sidecar(tmp_path: Path) -> None:
+    # What the model returns for the second segment is a decode loop rather than
+    # anything that was said. The transcript should not carry it, and the
+    # sidecar should say why it does not, so the decision can be checked.
+    packets = speech(0.0, 11) + speech(5.0, 11)
+    loop = " ".join(["Second"] * 250)
+    backend = MockBackend(texts=["so about the asset pipeline", loop])
+
+    result = run(tmp_path, packets, {11: "Alpha"}, backend=backend)
+
+    assert result.transcript_path.read_text(encoding="utf-8") == (
+        "[00:00:00] Alpha: so about the asset pipeline\n"
+    )
+
+    segments = json.loads(result.sidecar_path.read_text(encoding="utf-8"))["segments"]
+    assert "suppressed" not in segments[0]
+    assert segments[1]["text"] == loop
+    assert segments[1]["suppressed"] == "repetition"

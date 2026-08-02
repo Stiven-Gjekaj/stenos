@@ -72,8 +72,14 @@ class FakeVoiceChannel:
         return self.voice_client
 
 
-def feed(session: Any, *, packets: int = 40, payload: bytes = b"\x01\x00" * 960) -> None:
-    """Write audio into a session's sink so it passes the integrity check."""
+#: One 20 ms frame carrying signal. Transcription suppresses text over audio
+#: with nothing in it, so a fixture standing in for speech has to be loud
+#: enough to be speech.
+SPEECH = b"\x00\x04" * 960
+
+
+def feed(session: Any, *, packets: int = 40, payload: bytes = SPEECH) -> None:
+    """Write audio into a session's sink so it reads as somebody speaking."""
     for _ in range(packets):
         session.sink.write(payload, 11)
 
@@ -210,7 +216,7 @@ async def test_stop_transcribes_and_reports(
 
     session = bot.sessions[1]
     for _ in range(40):
-        session.sink.write(b"\x01\x00" * 960, 11)
+        session.sink.write(SPEECH, 11)
 
     stop_ctx = FakeContext(1, author)
     await command(bot, "stop")(stop_ctx)

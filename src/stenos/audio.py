@@ -15,7 +15,9 @@ import numpy.typing as npt
 from .sink import DISCORD_CHANNELS, DISCORD_SAMPLE_RATE, Segment
 
 __all__ = [
+    "SILENT_RMS",
     "TARGET_SAMPLE_RATE",
+    "loudness",
     "pcm_to_mono",
     "prepare_segments",
     "resample",
@@ -24,6 +26,13 @@ __all__ = [
 
 #: Sample rate every Whisper backend expects.
 TARGET_SAMPLE_RATE = 16_000
+
+#: Below this a segment carries no signal for a model to have recognised.
+#: Deliberately near the floor: the point is to identify audio that is silent,
+#: not to judge whether speech was loud enough, because quiet speech is still
+#: speech. Digital silence measures zero, and py-cord substitutes opus silence
+#: for any packet it cannot decrypt, so that is what this catches.
+SILENT_RMS = 0.002
 
 #: Full scale of signed 16 bit audio, used to normalise into [-1, 1).
 _INT16_FULL_SCALE = 32768.0
@@ -111,6 +120,17 @@ def resample(
     if _resample_poly is not None:
         return np.asarray(_resample_poly(samples, 1, factor), dtype=np.float32)
     return _decimate(samples, factor)
+
+
+def loudness(audio: npt.NDArray[np.float32]) -> float:
+    """Root mean square amplitude, on the same scale as the audio itself.
+
+    Preferred over the peak, which one click in an otherwise silent segment is
+    enough to raise.
+    """
+    if audio.size == 0:
+        return 0.0
+    return float(np.sqrt(np.mean(np.square(audio.astype(np.float64)))))
 
 
 def segment_to_audio(segment: Segment) -> npt.NDArray[np.float32]:

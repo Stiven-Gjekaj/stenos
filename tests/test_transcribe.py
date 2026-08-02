@@ -21,6 +21,7 @@ from stenos.transcribe import (
     MockBackend,
     TranscribedSegment,
     backend_status,
+    invented_reason,
     load_backend,
     mlx_repo_for,
     transcribe_segments,
@@ -289,3 +290,92 @@ def test_backend_status_never_constructs_a_model(monkeypatch: pytest.MonkeyPatch
 
     assert available is True
     assert constructed == []
+
+
+# Text the model invented. Both samples below are verbatim from live recordings,
+# so the thresholds are set against what actually came back rather than against
+# something plausible.
+
+#: 250 repetitions of one word over a two and a half second segment.
+REPEATED_WORD = " ".join(["Second"] * 250)
+
+#: One phrase repeated thirteen times over half a second.
+REPEATED_PHRASE = " ".join(["I didn't want to do that."] * 13)
+
+#: An ordinary line from the same call, for contrast.
+REAL_SPEECH = "Hello, my name is Stephen, and today we are going to talk about Thanos' bot."
+
+SPEECH = np.full(16_000, 0.2, dtype=np.float32)
+SILENCE = np.zeros(16_000, dtype=np.float32)
+
+
+def test_a_repeated_word_is_recognised_as_invented() -> None:
+    assert invented_reason(REPEATED_WORD, SPEECH) == "repetition"
+
+
+def test_a_repeated_phrase_is_recognised_as_invented() -> None:
+    assert invented_reason(REPEATED_PHRASE, SPEECH) == "repetition"
+
+
+def test_ordinary_speech_is_left_alone() -> None:
+    assert invented_reason(REAL_SPEECH, SPEECH) is None
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "4, 5, 6, 7.",
+        "So my name is",
+        "What is your name? Tell me your name. This discord server is a development server.",
+        "It is not currently working as expected.",
+    ],
+)
+def test_real_transcript_lines_survive(text: str) -> None:
+    # Every one of these came back from a live call and is what was said.
+    assert invented_reason(text, SPEECH) is None
+
+
+def test_repetition_needs_enough_words_to_establish_a_loop() -> None:
+    # Someone counting out loud repeats themselves honestly, and a short list
+    # cannot tell the two apart.
+    assert invented_reason("no no no no", SPEECH) is None
+
+
+def test_punctuation_does_not_disguise_a_loop() -> None:
+    text = (
+        "Right. Right, right! Right? Right. Right, right! Right? Right. Right, right! Right? Right."
+    )
+
+    assert invented_reason(text, SPEECH) == "repetition"
+
+
+def test_any_text_over_silence_is_invented() -> None:
+    # There is nothing in the audio for the model to have recognised, so it does
+    # not matter how ordinary the sentence looks.
+    assert invented_reason("Thank you.", SILENCE) == "silence"
+
+
+def test_silence_is_reported_before_repetition() -> None:
+    # Both hold. Silence is the more useful thing to record, since it says the
+    # audio was missing rather than that the model got stuck.
+    assert invented_reason(REPEATED_WORD, SILENCE) == "silence"
+
+
+def test_no_text_is_nothing_to_suppress() -> None:
+    assert invented_reason("", SILENCE) is None
+    assert invented_reason("   ", SILENCE) is None
+
+
+def test_transcribing_marks_what_the_model_invented() -> None:
+    segments = [
+        Segment(user_id=1, start=0.0, pcm=bytearray(BYTES_PER_SECOND)),
+        Segment(user_id=1, start=2.0, pcm=bytearray(BYTES_PER_SECOND)),
+    ]
+    backend = MockBackend(texts=[REAL_SPEECH, REPEATED_WORD])
+
+    results = transcribe_segments(segments, backend)
+
+    # Silent pcm, so both are suppressed, and the reason names which check fired.
+    assert [result.suppressed for result in results] == ["silence", "silence"]
+    # The text is kept either way.
+    assert results[0].text == REAL_SPEECH
