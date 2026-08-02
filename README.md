@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="assets/logo.png" alt="" width="180"/>
+
 # Stenos
 
 ### A Discord bot that records every voice participant separately and transcribes the call locally
