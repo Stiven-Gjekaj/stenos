@@ -17,7 +17,7 @@ import discord
 
 from . import __version__
 from .audio import prepare_segments
-from .config import Config, ConfigError, load_config
+from .config import Config, ConfigError, certificate_bundle, load_config
 from .integrity import check_recording
 from .sink import OPUS_PATH_VARIABLE, TimestampedSink, bundle_directory, ensure_opus
 from .transcribe import (
@@ -398,6 +398,7 @@ def describe_environment(config: Config) -> str:
         f"opus loaded      {ensure_opus()}",
         f"encryption       {dave_support().summary}",
         f"receive repair   {receive_repair_state().summary}",
+        f"certificates     {certificate_bundle() or 'system default'}",
     ]
     return "\n".join(lines)
 
@@ -452,6 +453,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     # captured nothing. Applied only when that is what the installed version
     # actually does.
     apply_receive_repair()
+
+    # Before connecting. Without a certificate list that exists on this
+    # machine, logging in fails at the TLS handshake with an error about a
+    # missing local issuer, which says nothing about the real cause.
+    certificate_bundle()
 
     build_bot(config).run(config.discord_token)
     return 0
