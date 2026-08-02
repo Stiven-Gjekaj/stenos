@@ -9,7 +9,7 @@ _One timestamped, speaker-attributed transcript. No audio leaves the machine_
 <p align="center">
   <img src="https://img.shields.io/badge/Python-3.11%20to%203.13-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python 3.11 to 3.13"/>
   <img src="https://img.shields.io/badge/dependencies-3_direct-007ec6?style=for-the-badge" alt="Three direct runtime dependencies"/>
-  <img src="https://img.shields.io/badge/tests-392_passing-427819?style=for-the-badge" alt="392 tests passing"/>
+  <img src="https://img.shields.io/badge/tests-428_passing-427819?style=for-the-badge" alt="428 tests passing"/>
 </p>
 
 <p align="center">
@@ -60,9 +60,10 @@ bundled with py-cord concatenates each user's received packets into one buffer.
 That discards the point in the call at which each utterance happened, so a
 participant who joins late, or who simply stays quiet for the first ten
 minutes, is placed at the wrong offset in the merged output. Most comparable
-projects inherit this drift. Stenos timestamps every packet on arrival and
-opens a new segment whenever a speaker falls silent past a threshold, so the
-merge is correct by construction rather than by correction.
+projects inherit this drift. Stenos places every packet on the media clock it
+carries, which advances with the audio rather than with delivery, and opens a
+new segment whenever a speaker falls silent past a threshold, so the merge is
+correct by construction rather than by correction.
 
 **Inference is local.** Audio is buffered in memory during the call and
 transcribed after it ends. Nothing is uploaded, and no API key is involved.
@@ -88,7 +89,7 @@ fanless laptop that will thermally throttle under sustained inference.
 - Display names cached as people join, so someone who leaves early is still named
 - Start and stop announced in the text channel, always
 - A recording that captured nothing says which of the two reasons applied
-- Two py-cord defects that lose received audio detected and repaired
+- Four py-cord defects that lose received audio or end a recording, repaired
 
 </td>
 <td width="50%" valign="top">
@@ -98,7 +99,7 @@ fanless laptop that will thermally throttle under sustained inference.
 - mlx-whisper on Apple Silicon, faster-whisper on CUDA and CPU
 - The model loaded once and reused across every segment
 - In-process resampling with an anti-aliasing filter, no subprocess per segment
-- Near-silence discarded before the model can hallucinate a line from it
+- Near-silence discarded before the model can invent a line from it, and what it invents anyway kept out of the transcript
 - A `.txt` transcript and a `.json` sidecar with raw timings
 - UTF-8 with line feed endings and sanitised filenames on every platform
 
@@ -327,7 +328,7 @@ reports whether the encryption library is present, `/record status` reports the
 negotiated session state while nothing has arrived yet, and `/record stop`
 explains which of the two happened instead of posting a transcript with no lines.
 
-**Two defects in py-cord 2.8.1 are repaired at startup.** The first discards
+**Four defects in py-cord 2.8.1 are repaired at startup.** The first discards
 received audio on a call carrying no encryption: `decrypt_rtp` performs the
 transport decryption into a local, then returns a field that only the encryption
 branch ever assigns, so the caller reads back nothing and drops the packet.
@@ -343,17 +344,30 @@ the packet fails to decrypt and becomes opus silence. There is no extension size
 at which the audio survives, which is why a recording made against a stock 2.8.1
 is silence interrupted by decode failures.
 
-Stenos repairs both, and no more than that. The first is confined to the one
-state where no encryption can have been applied: a connection with no session.
-The second changes which bytes are removed and when, never whether decryption
-happens. Every other state keeps py-cord's behaviour untouched.
+The third decrypts the audio a second time after it has been decoded, whenever
+the session reports the speaker as passthrough, which follows a downgrade,
+reset, or transition recovery and so follows anybody joining or leaving the
+channel. It raises inside the router thread, which ends the recording.
 
-Whether to repair is decided by running the decryptor at four different extension
-sizes, not by comparing version numbers, so a py-cord that has fixed either is
-left alone and that repair becomes inert rather than needing to be noticed and
-removed. `--check` reports the decision on the `receive repair` line, and the
-test suite fails with a message asking for the module to be deleted once the
-defects are gone.
+The fourth discards packets it had already buffered. The jitter buffer is
+flushed at the first sign of a sequence gap, the earliest packet is returned,
+and the rest are dropped after the buffer has been moved past all of them, so
+they cannot arrive again.
+
+Stenos repairs all four, and no more than that. The first is confined to the
+one state where no encryption can have been applied: a connection with no
+session. The second changes which bytes are removed and when, never whether
+decryption happens. The third removes a step rather than adding one. The
+fourth keeps what was already received. Every other state keeps py-cord's
+behaviour untouched.
+
+Each is decided by running the code rather than by comparing version numbers,
+so a py-cord that has fixed one is left alone and that repair becomes inert
+rather than needing to be noticed and removed. The decryption is probed at four
+different extension sizes, because the one Discord happens to send is the one
+size the defective constant matches. `--check` reports each decision on its own
+line, and the test suite fails with a message asking for a repair to be deleted
+once the defect it exists for is gone.
 
 **No live transcription.** Transcription is deliberately post-call. Running
 inference during a call on a fanless machine causes thermal throttling that
@@ -370,14 +384,14 @@ becomes text, and text becomes one ordered transcript.
 | --- | --- | --- | --- |
 | **Receiving** | sink.py | 393 | Places packets on the media clock they carry and splits segments on silence; loads libopus |
 | **Transport** | voice.py | 205 | Reads the end-to-end encryption state a voice connection negotiated |
-| **Transport** | upstream.py | 381 | Repairs the two py-cord 2.8.1 defects that lose received audio, when they are present |
-| **Conversion** | audio.py | 132 | Downmixes and resamples to 16 kHz mono, discarding fragments too short to carry speech |
+| **Transport** | upstream.py | 826 | Repairs the py-cord 2.8.1 defects that lose received audio or end a recording, when they are present |
+| **Conversion** | audio.py | 152 | Downmixes and resamples to 16 kHz mono, discarding fragments too short to carry speech |
 | **Verification** | integrity.py | 109 | Separates a recording that captured nothing from a call in which nobody spoke |
-| **Transcription** | transcribe.py | 283 | Backend protocol, mlx and faster-whisper implementations, and the segment loop |
-| **Output** | transcript.py | 203 | Merges, orders, and writes the transcript and its sidecar portably |
-| **Commands** | bot.py | 529 | Slash commands, session state, the offline pipeline, and the CLI |
+| **Transcription** | transcribe.py | 337 | Backend protocol, mlx and faster-whisper implementations, and the segment loop |
+| **Output** | transcript.py | 214 | Merges, orders, and writes the transcript and its sidecar portably |
+| **Commands** | bot.py | 562 | Slash commands, session state, the offline pipeline, and the CLI |
 | **Configuration** | config.py | 258 | Validated environment parsing and platform-aware backend resolution |
-| **Total** | **11 files** | **2519** | Plus 3847 lines of tests |
+| **Total** | **11 files** | **3082** | Plus 4457 lines of tests |
 
 ```
 src/stenos/      the bot (sink, transport, audio, transcription, output, commands)

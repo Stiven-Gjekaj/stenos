@@ -8,6 +8,69 @@ of the [README](README.md). A release covers a whole series: every commit
 sharing an `X.N.V` belongs to it, and the tag is cut at the last of them. The
 sections below are therefore headed by the series rather than by one version.
 
+## 0.1.5 (2026-08-02)
+
+Three more defects in py-cord's receive path, and the first pass at keeping
+text out of the transcript that nobody said. As with 0.1.4, every item came
+from reading or running the receive path rather than from the test suite.
+
+### Fixed
+
+- **The audio was decrypted a second time after it had been decoded.**
+  `PacketDecoder._decode_packet` turns the payload into linear audio and then
+  hands that audio to `dave.decrypt` whenever the session reports the speaker as
+  passthrough. The payload was decrypted in `decrypt_rtp` before it was ever
+  decoded, so this is a second decryption of something that is no longer
+  ciphertext. It either corrupts the audio or raises, and it raises inside the
+  router thread, which ends the recording.
+
+  Passthrough is not the rare state it sounds like. py-cord turns it on from
+  three places, on a DAVE downgrade, a session reset, and a transition recovery,
+  all of which follow somebody joining or leaving the channel. No recording made
+  so far has hit it, because every one of them was a single speaker on a stable
+  channel, which is the one shape that avoids it.
+
+- **Packets held in the jitter buffer were discarded rather than delivered.**
+  `_get_next_packet` flushes the whole buffer the first time the next packet is
+  out of sequence, returns the earliest of them, and drops the rest. The flush
+  has already moved the buffer's idea of what has been sent past all of them, so
+  what is dropped cannot arrive again. py-cord logs a warning naming the count
+  as it happens; a recent recording lost five packets, about a tenth of a
+  second, in its first second.
+
+  Because the buffer is polled with no timeout, this fires at the first sign of
+  a gap rather than after any wait, and a gap is most likely where a stream
+  starts. The packets are held and handed out in order instead. The readiness
+  flag counts them too, since it asks the buffer alone whether more is coming
+  and would otherwise stop the router polling a decoder that still has audio.
+
+- **A decode failure of any other kind still ended the recording.** The
+  tolerance added in 0.1.4 caught the error opus raises and nothing else, so an
+  exception from the encryption layer went straight through it and killed the
+  router thread. What ends a recording is the thread dying, and the thread does
+  not care which exception killed it.
+
+### Added
+
+- **Text the model invented is kept out of the transcript.** Whisper does not
+  decline to transcribe. Given audio with nothing in it, it returns a confident
+  sentence; given a fragment, it can repeat one phrase until the segment runs
+  out. Both were produced by real calls: 250 repetitions of a single word over
+  two and a half seconds, and a stock courtesy over opus silence.
+
+  Silence is judged from the audio rather than from a list of known phrases,
+  which would be fragile and would only work in English. Repetition is judged
+  from the shape of the text, because audio can legitimately be somebody
+  repeating themselves. The thresholds are set against the two captured samples,
+  which sit at ratios of 0.004 and 0.077 distinct words to total, against 0.6
+  and above for ordinary speech from the same calls.
+
+  A suppressed line is dropped from the transcript and kept in the sidecar with
+  the reason, so the decision can be checked rather than taken on trust.
+
+- **`--check` reports the two new repairs**, on their own lines beside the
+  existing one for the decryption.
+
 ## 0.1.4 (2026-08-02)
 
 The release in which a recording first contained the call. Everything below was
