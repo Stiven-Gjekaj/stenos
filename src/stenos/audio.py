@@ -1,28 +1,62 @@
-"""Conversion from Discord voice frames to the format Whisper expects.
+"""Recorded audio, and the conversions between how it arrives and how it is read.
 
-Discord delivers 48 kHz stereo signed 16 bit audio. Whisper consumes 16 kHz mono
+Discord delivers 48 kHz stereo signed 16 bit. Whisper consumes 16 kHz mono
 float32. A one-hour call yields several hundred segments, so the conversion runs
 in process with numpy rather than spawning a resampler per segment.
+
+It also runs as early as it can. Holding a whole call at the rate it arrives
+costs 192,000 bytes for every second of speech, and none of it can be released
+until transcription has finished, which is also when the model weights load. So
+a segment drops a channel as its packets arrive, which is exact per packet
+because averaging a pair of samples depends on nothing outside that pair, and
+drops its sample rate once it can no longer grow. What is held falls to a sixth,
+and the audio handed to the backend is the same audio it would have been handed
+before.
+
+``Segment`` lives here rather than in the sink because a segment is a span of
+audio, and because the sink needs these conversions: with the class the other
+way round the two modules could not import each other. ``sink`` re-exports it.
 """
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Iterable
+from dataclasses import dataclass, field
 
 import numpy as np
 import numpy.typing as npt
 
-from .sink import DISCORD_CHANNELS, DISCORD_SAMPLE_RATE, Segment
-
 __all__ = [
+    "BYTES_PER_SECOND",
+    "DISCORD_CHANNELS",
+    "DISCORD_SAMPLE_RATE",
+    "DISCORD_SAMPLE_WIDTH",
+    "MONO_BYTES_PER_SECOND",
     "SILENT_RMS",
     "TARGET_SAMPLE_RATE",
+    "Segment",
+    "downmix",
+    "downsample",
     "loudness",
     "pcm_to_mono",
     "prepare_segments",
     "resample",
     "segment_to_audio",
+    "to_float32",
 ]
+
+#: Discord decodes received voice to 48 kHz, stereo, signed 16 bit little endian.
+DISCORD_SAMPLE_RATE = 48_000
+DISCORD_CHANNELS = 2
+DISCORD_SAMPLE_WIDTH = 2
+
+#: Byte count of one second of audio in the format Discord delivers.
+BYTES_PER_SECOND = DISCORD_SAMPLE_RATE * DISCORD_CHANNELS * DISCORD_SAMPLE_WIDTH
+
+#: Byte count of one second once a channel has been dropped, which is how a
+#: segment holds audio while it is still being written to.
+MONO_BYTES_PER_SECOND = DISCORD_SAMPLE_RATE * DISCORD_SAMPLE_WIDTH
 
 #: Sample rate every Whisper backend expects.
 TARGET_SAMPLE_RATE = 16_000
@@ -49,8 +83,8 @@ except ImportError:  # pragma: no cover - the numpy path is the default
     _resample_poly = None
 
 
-def pcm_to_mono(pcm: bytes | bytearray) -> npt.NDArray[np.float32]:
-    """Downmix interleaved 16 bit stereo bytes to normalised float32 mono.
+def _stereo_frames(pcm: bytes | bytearray) -> npt.NDArray[np.int16]:
+    """Interleaved stereo bytes as a frame by channel array.
 
     A trailing partial frame is discarded, which can occur if a packet is
     truncated in transit.
@@ -58,11 +92,52 @@ def pcm_to_mono(pcm: bytes | bytearray) -> npt.NDArray[np.float32]:
     raw = np.frombuffer(bytes(pcm), dtype="<i2")
     frames = raw.size // DISCORD_CHANNELS
     if frames == 0:
-        return np.zeros(0, dtype=np.float32)
+        return np.zeros((0, DISCORD_CHANNELS), dtype=np.int16)
+    return raw[: frames * DISCORD_CHANNELS].reshape(-1, DISCORD_CHANNELS)
 
-    stereo = raw[: frames * DISCORD_CHANNELS].reshape(-1, DISCORD_CHANNELS)
+
+def pcm_to_mono(pcm: bytes | bytearray) -> npt.NDArray[np.float32]:
+    """Downmix interleaved 16 bit stereo bytes to normalised float32 mono."""
+    stereo = _stereo_frames(pcm)
+    if stereo.size == 0:
+        return np.zeros(0, dtype=np.float32)
     mono = stereo.mean(axis=1, dtype=np.float32)
     return np.asarray(mono / _INT16_FULL_SCALE, dtype=np.float32)
+
+
+def downmix(pcm: bytes | bytearray) -> bytes:
+    """Average the two channels of interleaved stereo, staying in 16 bit.
+
+    Exact per packet. Averaging a pair of samples depends on nothing outside
+    that pair, so running this as audio arrives gives the same bytes as running
+    it over a whole segment afterwards. No filter is involved, so there is no
+    state to carry across a packet boundary and no edge to get wrong.
+    """
+    stereo = _stereo_frames(pcm)
+    if stereo.size == 0:
+        return b""
+    # Summed in int32 so two full scale samples cannot wrap on the way.
+    mono = stereo.astype(np.int32).mean(axis=1)
+    return np.asarray(np.rint(mono), dtype="<i2").tobytes()
+
+
+def to_float32(pcm: bytes | bytearray) -> npt.NDArray[np.float32]:
+    """Normalise mono 16 bit bytes into the range a model reads."""
+    raw = np.frombuffer(bytes(pcm), dtype="<i2")
+    return np.asarray(raw.astype(np.float32) / _INT16_FULL_SCALE, dtype=np.float32)
+
+
+def to_int16(samples: npt.NDArray[np.float32]) -> bytes:
+    """Quantise normalised audio back to 16 bit.
+
+    Clipped rather than scaled, because a resampling filter overshoots slightly
+    around a sharp transient and scaling the whole segment to accommodate it
+    would quieten everything else to hide a few samples.
+    """
+    scaled = np.rint(samples.astype(np.float64) * _INT16_FULL_SCALE)
+    return np.asarray(
+        np.clip(scaled, -_INT16_FULL_SCALE, _INT16_FULL_SCALE - 1), dtype="<i2"
+    ).tobytes()
 
 
 def _lowpass_taps(factor: int) -> npt.NDArray[np.float32]:
@@ -122,6 +197,67 @@ def resample(
     return _decimate(samples, factor)
 
 
+def downsample(pcm: bytes | bytearray) -> bytes:
+    """Drop mono audio from the rate it arrives at to the rate a model reads."""
+    return to_int16(resample(to_float32(pcm)))
+
+
+@dataclass(slots=True)
+class Segment:
+    """One continuous stretch of speech from a single participant.
+
+    ``start`` is measured in seconds from the first packet of the recording,
+    which is the recording origin rather than the first packet from this user.
+
+    The audio is mono from the moment it is written, and stays at the rate it
+    arrived at until the segment can no longer grow, at which point ``reduce``
+    drops it to the rate a model reads. ``sample_rate`` says which of the two is
+    held, and is the only way to tell.
+    """
+
+    user_id: int
+    start: float
+    pcm: bytearray = field(default_factory=bytearray)
+    sample_rate: int = DISCORD_SAMPLE_RATE
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
+
+    @property
+    def duration(self) -> float:
+        """Length of the buffered audio in seconds, at whichever rate it holds."""
+        with self._lock:
+            return len(self.pcm) / (self.sample_rate * DISCORD_SAMPLE_WIDTH)
+
+    @property
+    def end(self) -> float:
+        """Offset in seconds at which this segment stops."""
+        return self.start + self.duration
+
+    def extend(self, payload: bytes) -> None:
+        """Append one packet's worth of audio, dropping its second channel."""
+        with self._lock:
+            self.pcm.extend(downmix(payload))
+
+    def reduce(self) -> None:
+        """Drop to the rate a model reads, releasing two thirds of what is held.
+
+        Both fields change together under the lock, because duration is read
+        from the pair of them and a reader arriving between the two writes would
+        measure the new audio against the old rate. Idempotent, so a segment
+        that has already been reduced costs nothing.
+        """
+        with self._lock:
+            if self.sample_rate == TARGET_SAMPLE_RATE:
+                return
+            reduced = downsample(self.pcm)
+            self.pcm = bytearray(reduced)
+            self.sample_rate = TARGET_SAMPLE_RATE
+
+    def clear(self) -> None:
+        """Release the buffered audio, once there is nothing left to read it for."""
+        with self._lock:
+            self.pcm.clear()
+
+
 def loudness(audio: npt.NDArray[np.float32]) -> float:
     """Root mean square amplitude, on the same scale as the audio itself.
 
@@ -134,8 +270,17 @@ def loudness(audio: npt.NDArray[np.float32]) -> float:
 
 
 def segment_to_audio(segment: Segment) -> npt.NDArray[np.float32]:
-    """Convert one recorded segment to 16 kHz mono float32."""
-    return resample(pcm_to_mono(segment.pcm))
+    """The audio of one segment, in the form every backend reads.
+
+    A reduced segment is already at the right rate and only needs normalising.
+    One that was never reduced, which happens to a recording that ended before
+    its worker drained, is resampled here instead, so the caller gets the same
+    audio either way.
+    """
+    samples = to_float32(segment.pcm)
+    if segment.sample_rate == TARGET_SAMPLE_RATE:
+        return samples
+    return resample(samples, segment.sample_rate)
 
 
 def prepare_segments(

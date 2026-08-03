@@ -29,7 +29,9 @@ packets are the silence and no separate voice activity detector is required.
 
 from __future__ import annotations
 
+import logging
 import os
+import queue
 import sys
 import threading
 import time
@@ -40,27 +42,29 @@ from typing import Any, ClassVar
 import discord.opus
 from discord.sinks import Filters, Sink
 
+from .audio import (
+    BYTES_PER_SECOND,
+    DISCORD_CHANNELS,
+    DISCORD_SAMPLE_RATE,
+    DISCORD_SAMPLE_WIDTH,
+    MONO_BYTES_PER_SECOND,
+    Segment,
+)
 from .config import bundle_directory
 
 __all__ = [
     "BYTES_PER_SECOND",
+    "DEFAULT_MAX_SEGMENT",
     "DISCORD_CHANNELS",
     "DISCORD_SAMPLE_RATE",
     "DISCORD_SAMPLE_WIDTH",
+    "MONO_BYTES_PER_SECOND",
     "Segment",
     "TimestampedSink",
     "bundle_directory",
     "ensure_opus",
     "opus_library_candidates",
 ]
-
-#: Discord decodes received voice to 48 kHz, stereo, signed 16 bit little endian.
-DISCORD_SAMPLE_RATE = 48_000
-DISCORD_CHANNELS = 2
-DISCORD_SAMPLE_WIDTH = 2
-
-#: Byte count of one second of decoded audio in the format above.
-BYTES_PER_SECOND = DISCORD_SAMPLE_RATE * DISCORD_CHANNELS * DISCORD_SAMPLE_WIDTH
 
 #: RTP timestamps count samples in an unsigned 32 bit field, so they wrap. At
 #: the Discord sample rate that happens roughly once a day.
@@ -73,6 +77,16 @@ TICK_WRAP = 2**32
 MAX_CLOCK_DISAGREEMENT = 60.0
 
 DEFAULT_SEGMENT_GAP = 0.4
+
+#: Longest a segment may run before it is closed for length rather than for
+#: silence. Bounds what one speaker who never pauses can hold, and bounds the
+#: work of reducing a segment once it closes. Thirty seconds is also the
+#: window a Whisper encoder reads, so a segment is never longer than the
+#: context the model has for it, and a long turn gets a timestamp per part
+#: instead of one for the whole of it.
+DEFAULT_MAX_SEGMENT = 30.0
+
+log = logging.getLogger("stenos")
 
 #: Environment variable pointing at libopus when it lives somewhere unusual.
 OPUS_PATH_VARIABLE = "OPUS_LIBRARY_PATH"
@@ -229,31 +243,8 @@ class _Speaker:
         return arrival
 
 
-@dataclass(slots=True)
-class Segment:
-    """One continuous stretch of speech from a single participant.
-
-    ``start`` is measured in seconds from the first packet of the recording,
-    which is the recording origin rather than the first packet from this user.
-    """
-
-    user_id: int
-    start: float
-    pcm: bytearray = field(default_factory=bytearray)
-
-    @property
-    def duration(self) -> float:
-        """Length of the buffered audio in seconds."""
-        return len(self.pcm) / BYTES_PER_SECOND
-
-    @property
-    def end(self) -> float:
-        """Offset in seconds at which this segment stops."""
-        return self.start + self.duration
-
-
 class TimestampedSink(Sink):
-    """Collect per-user segments keyed on wall-clock arrival time.
+    """Collect per-user segments, each placed on the clock its packets carry.
 
     The clock is injectable so segmentation can be driven by synthetic packet
     sequences in tests without sleeping.
@@ -263,6 +254,13 @@ class TimestampedSink(Sink):
     so starting a recording raises before any audio moves. They are supplied
     here, and the write signature accepts both the old calling convention and
     the new one, so this sink works either side of that change.
+
+    A segment that can no longer grow is handed to a worker rather than reduced
+    where it closes. Reducing thirty seconds of audio takes about seventy
+    milliseconds and packets arrive every twenty, so doing it on py-cord's
+    router thread would stall delivery every time somebody stopped speaking.
+    Producing that audio took thirty seconds, so the worker is some four hundred
+    times faster than the audio arrives and cannot fall behind.
     """
 
     #: Sink events to subscribe to, read by the router when a recording starts.
@@ -274,13 +272,17 @@ class TimestampedSink(Sink):
         self,
         *,
         segment_gap: float = DEFAULT_SEGMENT_GAP,
+        max_segment: float = DEFAULT_MAX_SEGMENT,
         clock: Callable[[], float] = time.perf_counter,
         filters: dict[str, Any] | None = None,
     ) -> None:
         super().__init__(filters=filters)
         if segment_gap < 0:
             raise ValueError(f"segment_gap must not be negative, got {segment_gap}")
+        if max_segment <= 0:
+            raise ValueError(f"max_segment must be positive, got {max_segment}")
         self.segment_gap = segment_gap
+        self.max_segment = max_segment
         self.encoding = "pcm"
         self._clock = clock
         self._lock = threading.Lock()
@@ -291,6 +293,32 @@ class TimestampedSink(Sink):
         self._packet_count = 0
         self._last_arrival: float | None = None
         self._unattributed = 0
+        self._closed: queue.SimpleQueue[Segment | None] = queue.SimpleQueue()
+        self._reducer: threading.Thread | None = None
+
+    def _reduce_closed(self) -> None:
+        """Drain closed segments, reducing each. Ends on the sentinel."""
+        while True:
+            segment = self._closed.get()
+            if segment is None:
+                return
+            try:
+                segment.reduce()
+            except Exception:
+                # A segment that will not reduce is still transcribable at the
+                # rate it arrived at, so this costs memory rather than audio.
+                log.exception("Could not reduce a closed segment")
+
+    def _retire(self, segment: Segment) -> None:
+        """Hand a segment that can no longer grow to the worker."""
+        if self._reducer is None:
+            self._reducer = threading.Thread(
+                target=self._reduce_closed,
+                name=f"stenos-reducer:{id(self):#x}",
+                daemon=True,
+            )
+            self._reducer.start()
+        self._closed.put(segment)
 
     def walk_children(self) -> list[Sink]:
         """Child sinks to register alongside this one. There are none."""
@@ -319,6 +347,7 @@ class TimestampedSink(Sink):
             return
 
         now = self._clock()
+        retiring: list[Segment] = []
         with self._lock:
             if self._origin is None:
                 self._origin = now
@@ -335,30 +364,68 @@ class TimestampedSink(Sink):
                 position = state.locate(ticks, arrival)
 
             segment = self._open.get(speaker)
-            if segment is None or (position - state.position) > self.segment_gap:
+            silent = segment is not None and (position - state.position) > self.segment_gap
+            # Closed for length as well as for silence. Without it one speaker
+            # who never pauses holds the whole call in a single segment, and
+            # the work of reducing that segment grows with the call.
+            overlong = segment is not None and (position - segment.start) >= self.max_segment
+
+            if segment is None or silent or overlong:
+                if segment is not None:
+                    retiring.append(segment)
                 segment = Segment(user_id=speaker, start=position)
                 self._open[speaker] = segment
                 self._segments.append(segment)
 
-            segment.pcm.extend(payload)
+            segment.extend(payload)
             state.position = position
             self._last_arrival = now
             self._packet_count += 1
+
+        # Outside the lock. Handing a segment over can start the worker, and
+        # the router thread has no reason to hold the sink shut while it does.
+        for closed in retiring:
+            self._retire(closed)
 
     def format_audio(self, audio: Any) -> None:
         """Required by the base sink. Nothing is written to disk during recording."""
         return None
 
     def cleanup(self) -> None:
-        """Close every open segment and mark the sink finished."""
+        """Close every open segment, reduce what is outstanding, and finish.
+
+        Waits for the worker rather than leaving it running, because everything
+        after this reads the segments and would otherwise race the reduction of
+        the last few. The wait is bounded: a queue that somehow did not drain
+        costs memory, and every segment is transcribable at whichever rate it
+        holds, so nothing is lost by giving up on it.
+        """
         with self._lock:
             self.finished = True
+            outstanding = list(self._open.values())
             self._open.clear()
+
+        for segment in outstanding:
+            self._retire(segment)
+
+        worker = self._reducer
+        if worker is not None:
+            self._closed.put(None)
+            worker.join(timeout=30.0)
+            if worker.is_alive():
+                log.warning("The segment reducer did not finish, so some audio is held twice.")
+            self._reducer = None
 
     def segments(self) -> list[Segment]:
         """Return every recorded segment ordered by position in the call."""
         with self._lock:
             return sorted(self._segments, key=lambda segment: (segment.start, segment.user_id))
+
+    @property
+    def buffered_bytes(self) -> int:
+        """Audio currently held in memory, across every segment."""
+        with self._lock:
+            return sum(len(segment.pcm) for segment in self._segments)
 
     @property
     def packet_count(self) -> int:

@@ -12,7 +12,7 @@ import numpy as np
 import pytest
 
 from stenos.audio import TARGET_SAMPLE_RATE
-from stenos.sink import BYTES_PER_SECOND, Segment
+from stenos.sink import MONO_BYTES_PER_SECOND, Segment
 from stenos.transcribe import (
     MLX_MODEL_REPOS,
     BackendUnavailableError,
@@ -29,7 +29,9 @@ from stenos.transcribe import (
 
 
 def segment_of(seconds: float, *, user_id: int = 1, start: float = 0.0) -> Segment:
-    return Segment(user_id=user_id, start=start, pcm=bytearray(int(BYTES_PER_SECOND * seconds)))
+    return Segment(
+        user_id=user_id, start=start, pcm=bytearray(int(MONO_BYTES_PER_SECOND * seconds))
+    )
 
 
 def test_every_segment_is_transcribed_in_order() -> None:
@@ -368,8 +370,8 @@ def test_no_text_is_nothing_to_suppress() -> None:
 
 def test_transcribing_marks_what_the_model_invented() -> None:
     segments = [
-        Segment(user_id=1, start=0.0, pcm=bytearray(BYTES_PER_SECOND)),
-        Segment(user_id=1, start=2.0, pcm=bytearray(BYTES_PER_SECOND)),
+        segment_of(1.0, start=0.0),
+        segment_of(1.0, start=2.0),
     ]
     backend = MockBackend(texts=[REAL_SPEECH, REPEATED_WORD])
 

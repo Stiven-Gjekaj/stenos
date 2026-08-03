@@ -1,4 +1,4 @@
-"""Tests for downmixing, resampling, and short-segment filtering."""
+"""Tests for downmixing, resampling, reducing a segment, and short-segment filtering."""
 
 from __future__ import annotations
 
@@ -10,13 +10,22 @@ import pytest
 
 from stenos import audio
 from stenos.audio import (
+    _INT16_FULL_SCALE,
     TARGET_SAMPLE_RATE,
+    downmix,
     pcm_to_mono,
     prepare_segments,
     resample,
     segment_to_audio,
+    to_int16,
 )
-from stenos.sink import BYTES_PER_SECOND, DISCORD_SAMPLE_RATE, Segment
+from stenos.sink import (
+    BYTES_PER_SECOND,
+    DISCORD_CHANNELS,
+    DISCORD_SAMPLE_RATE,
+    MONO_BYTES_PER_SECOND,
+    Segment,
+)
 
 
 def stereo_pcm(left: list[int], right: list[int]) -> bytes:
@@ -90,7 +99,8 @@ def test_resampling_produces_a_third_of_the_input_samples(frames: int) -> None:
 
 
 def test_full_pipeline_shape_from_bytes_to_model_input() -> None:
-    audio_samples = segment_to_audio(Segment(user_id=1, start=0.0, pcm=bytearray(BYTES_PER_SECOND)))
+    one_second = Segment(user_id=1, start=0.0, pcm=bytearray(MONO_BYTES_PER_SECOND))
+    audio_samples = segment_to_audio(one_second)
 
     assert audio_samples.shape == (TARGET_SAMPLE_RATE,)
     assert audio_samples.dtype == np.float32
@@ -158,7 +168,11 @@ def test_numpy_path_matches_scipy_path_when_scipy_is_absent(
 
 
 def segment_of(seconds: float, *, user_id: int = 1, start: float = 0.0) -> Segment:
-    return Segment(user_id=user_id, start=start, pcm=bytearray(int(BYTES_PER_SECOND * seconds)))
+    # A segment holds mono from the moment it is written to, so a second of
+    # it is half what a second of the wire format costs.
+    return Segment(
+        user_id=user_id, start=start, pcm=bytearray(int(MONO_BYTES_PER_SECOND * seconds))
+    )
 
 
 def test_segments_shorter_than_the_threshold_are_discarded() -> None:
@@ -192,3 +206,101 @@ def test_zero_threshold_keeps_everything_with_audio() -> None:
 def test_default_threshold_is_three_tenths_of_a_second() -> None:
     assert prepare_segments([segment_of(0.2)]) == []
     assert len(prepare_segments([segment_of(0.4)])) == 1
+
+
+# Holding a call. The audio a segment carries has to survive being reduced,
+# because the whole reason for reducing it is to hold less of the same thing.
+
+
+def speech_like(seconds: float) -> bytes:
+    """Interleaved stereo bytes with content, at a level a person speaks at."""
+    rng = np.random.default_rng(7)
+    positions = np.arange(int(DISCORD_SAMPLE_RATE * seconds)) / DISCORD_SAMPLE_RATE
+    wave = 0.3 * np.sin(2 * np.pi * 220 * positions)
+    wave += 0.15 * np.sin(2 * np.pi * 900 * positions)
+    wave += 0.02 * rng.standard_normal(positions.size)
+    return np.repeat((wave * 20_000).astype("<i2"), DISCORD_CHANNELS).tobytes()
+
+
+def test_reducing_a_segment_keeps_the_audio_it_held() -> None:
+    # The property the whole change rests on. Reducing early has to give the
+    # backend what converting late gave it, or the transcript changes.
+    stereo = speech_like(3.0)
+    expected = resample(pcm_to_mono(stereo))
+
+    segment = Segment(user_id=1, start=0.0)
+    for offset in range(0, len(stereo), 3840):
+        segment.extend(stereo[offset : offset + 3840])
+    segment.reduce()
+
+    actual = segment_to_audio(segment)
+    assert actual.shape == expected.shape
+    # Within half a step of 16 bit, which is the quantisation and nothing else.
+    assert np.abs(actual - expected).max() <= 1 / _INT16_FULL_SCALE
+
+
+def test_reducing_a_segment_keeps_its_duration() -> None:
+    # Every timestamp after the first derives from a duration, so a segment
+    # that changes length while being reduced moves the transcript.
+    segment = Segment(user_id=1, start=4.0, pcm=bytearray(downmix(speech_like(3.0))))
+    before = segment.duration
+
+    segment.reduce()
+
+    assert segment.duration == pytest.approx(before, abs=1e-3)
+    assert segment.end == pytest.approx(4.0 + before, abs=1e-3)
+
+
+def test_reducing_a_segment_holds_a_sixth_of_what_arrived() -> None:
+    stereo = speech_like(3.0)
+    segment = Segment(user_id=1, start=0.0)
+    segment.extend(stereo)
+
+    assert len(segment.pcm) == len(stereo) // DISCORD_CHANNELS
+    segment.reduce()
+    assert len(segment.pcm) == pytest.approx(len(stereo) / 6, rel=0.01)
+
+
+def test_reducing_twice_changes_nothing() -> None:
+    # The worker can be handed a segment that cleanup already retired.
+    segment = Segment(user_id=1, start=0.0, pcm=bytearray(downmix(speech_like(1.0))))
+    segment.reduce()
+    once = bytes(segment.pcm)
+
+    segment.reduce()
+
+    assert bytes(segment.pcm) == once
+    assert segment.sample_rate == TARGET_SAMPLE_RATE
+
+
+def test_downmixing_per_packet_matches_downmixing_the_whole_segment() -> None:
+    # Why it is safe to do this on arrival: averaging a pair of samples depends
+    # on nothing outside that pair, so there is no boundary to get wrong.
+    stereo = speech_like(1.0)
+    in_one_go = downmix(stereo)
+    piecewise = b"".join(
+        downmix(stereo[offset : offset + 3840]) for offset in range(0, len(stereo), 3840)
+    )
+
+    assert piecewise == in_one_go
+
+
+def test_an_unreduced_segment_still_reaches_the_backend_correctly() -> None:
+    # A recording whose worker did not drain in time is transcribable as it is,
+    # so the conversion has to cope with either rate.
+    segment = Segment(user_id=1, start=0.0, pcm=bytearray(downmix(speech_like(1.0))))
+
+    audio_samples = segment_to_audio(segment)
+
+    assert audio_samples.shape == (TARGET_SAMPLE_RATE,)
+    assert segment.sample_rate == DISCORD_SAMPLE_RATE
+
+
+def test_quantising_clips_rather_than_wrapping() -> None:
+    # A resampling filter overshoots around a transient. Wrapping would turn the
+    # loudest moment of a segment into its quietest.
+    over = np.array([1.5, -1.5, 0.0], dtype=np.float32)
+
+    raw = np.frombuffer(to_int16(over), dtype="<i2")
+
+    assert list(raw) == [32767, -32768, 0]

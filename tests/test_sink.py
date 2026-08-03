@@ -7,10 +7,14 @@ from itertools import pairwise
 
 import pytest
 
+from stenos.audio import TARGET_SAMPLE_RATE
 from stenos.sink import (
     BYTES_PER_SECOND,
+    DEFAULT_MAX_SEGMENT,
+    DISCORD_CHANNELS,
     DISCORD_SAMPLE_RATE,
     MAX_CLOCK_DISAGREEMENT,
+    MONO_BYTES_PER_SECOND,
     Segment,
     TimestampedSink,
 )
@@ -150,7 +154,8 @@ def test_payload_is_appended_to_the_open_segment() -> None:
     sink = record([(0.0, 1), (0.02, 1), (0.04, 1)])
 
     (segment,) = sink.segments()
-    assert len(segment.pcm) == 3 * FRAME_BYTES
+    # Half of what arrived: a channel is dropped as each packet is written.
+    assert len(segment.pcm) == 3 * FRAME_BYTES // DISCORD_CHANNELS
 
 
 def test_packet_count_and_user_ids_are_reported() -> None:
@@ -206,7 +211,7 @@ def test_zero_gap_splits_on_every_packet() -> None:
 
 
 def test_segment_duration_derives_from_the_byte_count() -> None:
-    segment = Segment(user_id=1, start=2.0, pcm=bytearray(BYTES_PER_SECOND))
+    segment = Segment(user_id=1, start=2.0, pcm=bytearray(MONO_BYTES_PER_SECOND))
 
     assert segment.duration == pytest.approx(1.0)
     assert segment.end == pytest.approx(3.0)
@@ -249,10 +254,12 @@ def record_media(
     packets: Sequence[tuple[float, int, int]],
     *,
     segment_gap: float = 0.4,
+    max_segment: float = DEFAULT_MAX_SEGMENT,
 ) -> TimestampedSink:
     """Drive a sink with (arrival time, media timestamp, user) packets."""
     sink = TimestampedSink(
         segment_gap=segment_gap,
+        max_segment=max_segment,
         clock=ScriptedClock([arrival for arrival, _, _ in packets]),
     )
     for _, ticks, user in packets:
@@ -375,3 +382,81 @@ def test_duration_reaches_the_end_of_the_audio_not_the_last_arrival() -> None:
 
     # Fifty frames is a second of audio, delivered in a twentieth of one.
     assert sink.duration == pytest.approx(1.0)
+
+
+# Reducing what closes. A segment that can no longer grow is handed to a worker
+# rather than reduced where it closes, because reducing thirty seconds of audio
+# takes about seventy milliseconds and packets arrive every twenty.
+
+
+def test_a_closed_segment_is_reduced_and_the_open_one_is_not() -> None:
+    # The gap closes the first segment. The second is still being written to,
+    # so it stays at the rate it arrived at.
+    sink = record([(0.0, 1), (0.02, 1), (5.0, 1)], segment_gap=0.4)
+    sink.cleanup()
+
+    first, second = sink.segments()
+    assert first.sample_rate == TARGET_SAMPLE_RATE
+    # cleanup retires whatever was still open, so by now both are reduced.
+    assert second.sample_rate == TARGET_SAMPLE_RATE
+
+
+def test_cleanup_waits_for_the_worker_before_returning() -> None:
+    # Everything after cleanup reads the segments. Returning while the worker is
+    # still going would race the reduction of the last of them.
+    sink = record([(0.0, 1), (5.0, 1), (10.0, 1)], segment_gap=0.4)
+
+    sink.cleanup()
+
+    assert all(segment.sample_rate == TARGET_SAMPLE_RATE for segment in sink.segments())
+    assert sink._reducer is None
+
+
+def test_buffered_bytes_falls_as_segments_close() -> None:
+    sink = record([(index * 0.02, 1) for index in range(50)], segment_gap=0.4)
+    while_open = sink.buffered_bytes
+
+    sink.cleanup()
+
+    # One second of audio: 96,000 bytes mono at the rate it arrives, 32,000 once
+    # it has been reduced.
+    assert while_open == pytest.approx(MONO_BYTES_PER_SECOND, rel=0.05)
+    assert sink.buffered_bytes == pytest.approx(MONO_BYTES_PER_SECOND / 3, rel=0.05)
+
+
+def test_an_empty_sink_holds_nothing() -> None:
+    assert TimestampedSink().buffered_bytes == 0
+
+
+def test_cleanup_is_safe_with_no_worker_ever_started() -> None:
+    sink = TimestampedSink()
+
+    sink.cleanup()
+
+    assert sink.finished is True
+
+
+# Closing for length. Without it one speaker who never pauses holds the whole
+# call in a single segment, and reducing that segment costs more the longer the
+# call runs.
+
+
+def test_a_segment_closes_once_it_reaches_the_maximum_length() -> None:
+    # Packets 20 ms apart with no gap ever exceeding the threshold, so only the
+    # length can split this.
+    packets = [(index * 0.02, index * FRAME_TICKS, 1) for index in range(300)]
+
+    starts = boundaries(record_media(packets, max_segment=2.0))
+
+    assert starts == [(1, 0.0), (1, 2.0), (1, 4.0)]
+
+
+def test_the_length_cap_does_not_split_a_segment_that_ends_first() -> None:
+    packets = [(index * 0.02, index * FRAME_TICKS, 1) for index in range(50)]
+
+    assert boundaries(record_media(packets, max_segment=30.0)) == [(1, 0.0)]
+
+
+def test_a_non_positive_maximum_length_is_rejected() -> None:
+    with pytest.raises(ValueError, match="max_segment"):
+        TimestampedSink(max_segment=0.0)

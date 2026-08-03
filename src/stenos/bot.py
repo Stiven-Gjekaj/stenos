@@ -85,7 +85,7 @@ def discard_audio(sink: TimestampedSink) -> None:
     emptying the buffers once the transcript has been written.
     """
     for segment in sink.segments():
-        segment.pcm.clear()
+        segment.clear()
 
 
 def run_pipeline(

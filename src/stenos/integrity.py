@@ -52,6 +52,10 @@ def _all_silence(segments: list[Segment]) -> bool:
     and more obvious no-packets case. Real audio leaves the loop on its first
     non-zero byte, so the full scan only happens for a recording that is
     genuinely silent.
+
+    Reads whichever representation a segment holds. Silence survives both the
+    downmix and the resample, so the verdict is the same either way: the mean
+    of two zeroes is zero, and a filter over zeroes returns them.
     """
     total = 0
     for segment in segments:
