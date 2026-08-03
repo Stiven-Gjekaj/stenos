@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 import discord
+from discord.ext import tasks
 
 from . import __version__
 from .audio import prepare_segments
@@ -51,6 +52,7 @@ from .upstream import (
 from .voice import PYCORD_RECEIVE_ISSUE, dave_state, dave_support, receive_support
 
 __all__ = [
+    "BUFFER_CHECK_SECONDS",
     "RecordingResult",
     "RecordingSession",
     "StenosBot",
@@ -58,6 +60,7 @@ __all__ = [
     "describe_environment",
     "describe_result",
     "discard_audio",
+    "finish_recording",
     "format_duration",
     "main",
     "register_commands",
@@ -156,6 +159,10 @@ class RecordingSession:
     text_channel: Any
     voice_client: Any
     sink: TimestampedSink
+    #: Read for the upload limit when attaching a transcript. Held on the
+    #: session rather than taken from the command, so a recording that stops
+    #: itself reads the same thing a stopped one does.
+    guild: Any = None
     names: dict[int, str] = field(default_factory=dict)
     started_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     started_monotonic: float = field(default_factory=time.perf_counter)
@@ -189,20 +196,29 @@ def format_duration(seconds: float) -> str:
     return f"{secs}s"
 
 
-def describe_result(result: RecordingResult) -> str:
-    """Summarise a finished recording for the text channel."""
+def describe_result(result: RecordingResult, *, stopped: str = "Recording stopped") -> str:
+    """Summarise a finished recording for the text channel.
+
+    ``stopped`` opens the message, so a recording that ended itself can say why
+    in the same sentence rather than in one placed awkwardly before it.
+    """
     if result.packet_count == 0:
         return (
-            "Recording stopped, but no audio was received. "
+            f"{stopped}, but no audio was received. "
             "No transcript was produced. This is expected when the voice "
             "connection carried no decodable audio; see the known limitations "
             "section of the documentation."
         )
     return (
-        f"Recording stopped. Transcribed {result.segment_count} segments "
+        f"{stopped}. Transcribed {result.segment_count} segments "
         f"from {result.speakers} speakers over {format_duration(result.duration)}."
     )
 
+
+#: How often a recording is measured against the buffer ceiling. Often
+#: enough that a runaway is caught within a few seconds of audio, rarely
+#: enough to be free.
+BUFFER_CHECK_SECONDS = 15.0
 
 log = logging.getLogger("stenos")
 
@@ -217,8 +233,66 @@ class StenosBot(discord.Bot):  # type: ignore[misc]
         self.config = config
         self.sessions: dict[int, RecordingSession] = {}
 
+    @tasks.loop(seconds=BUFFER_CHECK_SECONDS)
+    async def _watch_buffers(self) -> None:
+        await self.enforce_buffer_limit()
+
     async def on_ready(self) -> None:
         log.info("Connected as %s", self.user)
+        # on_ready fires again after every reconnect, and starting a loop that
+        # is already running raises.
+        if not self._watch_buffers.is_running():
+            self._watch_buffers.start()
+
+    async def over_budget(self) -> list[RecordingSession]:
+        """Sessions holding more audio than the configured ceiling allows.
+
+        Removed from the register as they are found, so a session cannot be
+        stopped twice by two checks overlapping, and so the stop command sees a
+        recording that is already ending as one that is not there.
+        """
+        limit = self.config.max_buffer_mb
+        if limit <= 0:
+            return []
+
+        ceiling = int(limit * 1_000_000)
+        over = [
+            session
+            for session in list(self.sessions.values())
+            if session.sink.buffered_bytes > ceiling
+        ]
+        for session in over:
+            self.sessions.pop(session.guild_id, None)
+        return over
+
+    async def enforce_buffer_limit(self) -> None:
+        """End any recording that has outgrown the ceiling, and say why.
+
+        A recording that runs until the host is out of memory takes the whole
+        call with it. Stopping it leaves everything captured so far written out
+        and a message naming the setting that decided it.
+        """
+        for session in await self.over_budget():
+            held = session.sink.buffered_bytes / 1_000_000
+            log.warning(
+                "Recording in %s reached the buffer limit at %.1f MB, stopping it.",
+                session.channel_name,
+                held,
+            )
+            message, attachment = await finish_recording(
+                self,
+                session,
+                stopped=(
+                    f"Recording stopped at the {self.config.max_buffer_mb:g} MB buffer "
+                    f"limit after {format_duration(session.elapsed())}"
+                ),
+                closing="Raise MAX_BUFFER_MB to record for longer.",
+            )
+            with contextlib.suppress(Exception):
+                if attachment is None:
+                    await session.text_channel.send(message)
+                else:
+                    await session.text_channel.send(message, file=attachment)
 
     async def on_voice_state_update(self, member: Any, before: Any, after: Any) -> None:
         """Cache the display name of anyone who joins a channel being recorded."""
@@ -227,6 +301,87 @@ class StenosBot(discord.Bot):  # type: ignore[misc]
             return
         if getattr(after.channel, "id", None) == session.channel_id:
             session.remember(member)
+
+
+async def finish_recording(
+    bot: StenosBot,
+    session: RecordingSession,
+    *,
+    stopped: str = "Recording stopped",
+    closing: str = "",
+) -> tuple[str, Any]:
+    """Stop, transcribe, and write out one recording, whoever asked for it.
+
+    Shared by the stop command and the buffer ceiling, so a recording that ends
+    itself produces the same transcript and the same message as one that was
+    asked to stop, rather than a second implementation that drifts from this.
+
+    Returns what to say and what to attach, if anything. Nothing here raises: a
+    caller is usually answering a deferred command, and an exception escaping
+    would leave it answering forever, which is indistinguishable from a
+    transcription that is merely slow.
+    """
+    try:
+        session.voice_client.stop_recording()
+    except Exception as error:
+        log.warning("Stopping the recording failed: %s", error)
+    session.sink.cleanup()
+
+    # Read before disconnecting. The connection state is gone afterwards, and
+    # it is the only account of why a recording captured nothing.
+    dave = dave_state(session.voice_client)
+    with contextlib.suppress(Exception):
+        await session.voice_client.disconnect()
+
+    # Checked before the backend is loaded, so a recording that captured
+    # nothing does not wait on a model that has nothing to do.
+    integrity = check_recording(session.sink, dave)
+    if not integrity.ok:
+        log.warning(
+            "Recording captured no usable audio (%s): %s",
+            integrity.reason,
+            dave.summary,
+        )
+        return f"{stopped}. {integrity.detail}", None
+
+    try:
+        backend = await asyncio.to_thread(
+            load_backend,
+            bot.config.whisper_backend,
+            bot.config.whisper_model,
+        )
+        result = await asyncio.to_thread(
+            run_pipeline,
+            session.sink,
+            session.names,
+            channel_name=session.channel_name,
+            config=bot.config,
+            backend=backend,
+            recorded_at=session.started_at,
+        )
+    except BackendUnavailableError as error:
+        log.error("Transcription backend unavailable: %s", error)
+        return (
+            f"{stopped}, but the transcription backend is unavailable, "
+            f"so the audio could not be transcribed. {error}"
+        ), None
+    except Exception as error:
+        log.exception("Transcription failed")
+        return (f"{stopped}, but transcription failed: {error.__class__.__name__}: {error}"), None
+
+    message = describe_result(result, stopped=stopped)
+    skipped = skipped_frames()
+    if skipped:
+        # A gap in a transcript should have a stated cause rather than looking
+        # like a pause in the conversation.
+        message += (
+            f" {skipped} packets would not decode and were skipped, "
+            f"so short stretches of audio are missing."
+        )
+    if closing:
+        message += f" {closing}"
+
+    return message, _attachment_for(result, session.guild)
 
 
 def register_commands(bot: StenosBot, guild_ids: list[int] | None = None) -> Any:
@@ -272,6 +427,7 @@ def register_commands(bot: StenosBot, guild_ids: list[int] | None = None) -> Any
             text_channel=ctx.channel,
             voice_client=voice_client,
             sink=sink,
+            guild=getattr(ctx, "guild", None),
         )
         session.remember_all(getattr(channel, "members", []))
 
@@ -319,79 +475,11 @@ def register_commands(bot: StenosBot, guild_ids: list[int] | None = None) -> Any
             return
 
         await ctx.defer()
-        # The caller is waiting on a deferred response, so nothing between here
-        # and the reply may raise. Stopping a recording that never started
-        # raises, which used to leave the command answering forever.
-        try:
-            session.voice_client.stop_recording()
-        except Exception as error:
-            log.warning("Stopping the recording failed: %s", error)
-        session.sink.cleanup()
-        # Read before disconnecting. The connection state is gone afterwards,
-        # and it is the only account of why a recording captured nothing.
-        dave = dave_state(session.voice_client)
-        with contextlib.suppress(Exception):
-            await session.voice_client.disconnect()
-
-        # Checked before the backend is loaded, so a recording that captured
-        # nothing does not wait on a model that has nothing to do.
-        integrity = check_recording(session.sink, dave)
-        if not integrity.ok:
-            log.warning(
-                "Recording captured no usable audio (%s): %s",
-                integrity.reason,
-                dave.summary,
-            )
-            await ctx.followup.send(f"Recording stopped. {integrity.detail}")
-            return
-
-        # Failures are reported back to the channel rather than left to the
-        # library's exception logger. The caller is waiting on a deferred
-        # response, and an unanswered command is indistinguishable from a
-        # transcription that is merely slow.
-        try:
-            backend = await asyncio.to_thread(
-                load_backend,
-                bot.config.whisper_backend,
-                bot.config.whisper_model,
-            )
-            result = await asyncio.to_thread(
-                run_pipeline,
-                session.sink,
-                session.names,
-                channel_name=session.channel_name,
-                config=bot.config,
-                backend=backend,
-                recorded_at=session.started_at,
-            )
-        except BackendUnavailableError as error:
-            log.error("Transcription backend unavailable: %s", error)
-            await ctx.followup.send(
-                f"Recording stopped, but the transcription backend is unavailable, "
-                f"so the audio could not be transcribed. {error}"
-            )
-            return
-        except Exception as error:
-            log.exception("Transcription failed")
-            await ctx.followup.send(
-                f"Recording stopped, but transcription failed: {error.__class__.__name__}: {error}"
-            )
-            return
+        message, attachment = await finish_recording(bot, session)
 
         # The keyword is omitted rather than passed as None. Discord's helper
         # reads an attribute off whatever it is given, so an explicit None
         # raises while building the message and the caller is left waiting.
-        message = describe_result(result)
-        skipped = skipped_frames()
-        if skipped:
-            # A gap in a transcript should have a stated cause rather than
-            # looking like a pause in the conversation.
-            message += (
-                f" {skipped} packets would not decode and were skipped, "
-                f"so short stretches of audio are missing."
-            )
-
-        attachment = _attachment_for(result, ctx)
         if attachment is None:
             await ctx.followup.send(message)
         else:
@@ -435,11 +523,11 @@ def _on_recording_finished(exception: BaseException | None = None) -> None:
         log.error("Recording ended with an error: %s", exception)
 
 
-def _attachment_for(result: RecordingResult, ctx: Any) -> Any:
+def _attachment_for(result: RecordingResult, guild: Any) -> Any:
     """Attach the transcript when it fits inside the guild's upload limit."""
     if result.packet_count == 0 or not result.lines:
         return None
-    limit = getattr(getattr(ctx, "guild", None), "filesize_limit", 0) or 0
+    limit = getattr(guild, "filesize_limit", 0) or 0
     if result.transcript_path.stat().st_size >= limit:
         return None
     return discord.File(result.transcript_path)

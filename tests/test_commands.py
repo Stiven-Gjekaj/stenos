@@ -92,6 +92,16 @@ class FakeFollowup:
         self.sent.append((content, file))
 
 
+class FakeTextChannel:
+    """The channel a session posts to when it ends without being asked to."""
+
+    def __init__(self) -> None:
+        self.sent: list[tuple[str, Any]] = []
+
+    async def send(self, content: str, file: Any = None) -> None:
+        self.sent.append((content, file))
+
+
 class FakeGuild:
     def __init__(self, guild_id: int, filesize_limit: int = 8_388_608) -> None:
         self.id = guild_id
@@ -102,7 +112,7 @@ class FakeContext:
     def __init__(self, guild_id: int | None, author: FakeMember) -> None:
         self.guild_id = guild_id
         self.author = author
-        self.channel = object()
+        self.channel = FakeTextChannel()
         self.guild = FakeGuild(guild_id) if guild_id is not None else None
         self.responses: list[tuple[str, bool]] = []
         self.deferred = False
@@ -117,8 +127,14 @@ class FakeContext:
         self.deferred_ephemeral = ephemeral
 
 
-def make_bot(tmp_path: Path) -> Any:
-    return build_bot(Config(discord_token="token", output_dir=tmp_path, min_segment=0.0))
+def make_bot(tmp_path: Path, **overrides: Any) -> Any:
+    settings: dict[str, Any] = {
+        "discord_token": "token",
+        "output_dir": tmp_path,
+        "min_segment": 0.0,
+    }
+    settings.update(overrides)
+    return build_bot(Config(**settings))
 
 
 def command(bot: Any, name: str) -> Any:
@@ -501,3 +517,100 @@ def test_the_finished_callback_is_not_a_coroutine() -> None:
     import inspect
 
     assert not inspect.iscoroutinefunction(bot_module._on_recording_finished)
+
+
+# The buffer ceiling. A recording that runs until the host is out of memory
+# takes the whole call with it, so one that outgrows the limit is stopped and
+# what it captured is written out.
+
+
+async def recording_at(tmp_path: Path, *, held_mb: float, limit_mb: float) -> tuple[Any, Any]:
+    """A started recording holding roughly held_mb, under a limit of limit_mb."""
+    bot = make_bot(tmp_path, max_buffer_mb=limit_mb)
+    channel = FakeVoiceChannel(2, "general", [])
+    author = FakeMember(11, "Alpha", channel=channel)
+    channel.members = [author]
+    await command(bot, "start")(FakeContext(1, author))
+
+    session = bot.sessions[1]
+    # A channel is dropped as each packet is written, so what is held is
+    # half of what was handed over.
+    packets = int(held_mb * 1_000_000 / (len(SPEECH) // 2)) + 1
+    feed(session, packets=packets)
+    return bot, session
+
+
+async def test_a_recording_under_the_limit_is_left_alone(tmp_path: Path) -> None:
+    bot, _session = await recording_at(tmp_path, held_mb=0.1, limit_mb=1024.0)
+
+    await bot.enforce_buffer_limit()
+
+    assert 1 in bot.sessions
+
+
+async def test_a_recording_over_the_limit_is_stopped_and_says_why(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        bot_module,
+        "load_backend",
+        lambda *args, **kwargs: MockBackend(texts=["so about the asset pipeline"]),
+    )
+    bot, session = await recording_at(tmp_path, held_mb=0.5, limit_mb=0.1)
+
+    await bot.enforce_buffer_limit()
+
+    assert 1 not in bot.sessions
+    (message, _attachment) = session.text_channel.sent[0]
+    assert "buffer limit" in message
+    assert "0.1 MB" in message
+    # What it captured is still transcribed and still reported.
+    assert "Transcribed" in message
+    assert "MAX_BUFFER_MB" in message
+
+
+async def test_a_zero_limit_never_stops_a_recording(tmp_path: Path) -> None:
+    # A host with the memory for it, and a reason to use it.
+    bot, _session = await recording_at(tmp_path, held_mb=0.5, limit_mb=0.0)
+
+    await bot.enforce_buffer_limit()
+
+    assert 1 in bot.sessions
+
+
+async def test_a_session_over_the_limit_is_only_stopped_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Two checks overlapping must not both transcribe the same recording.
+    monkeypatch.setattr(bot_module, "load_backend", lambda *a, **k: MockBackend())
+    bot, session = await recording_at(tmp_path, held_mb=0.5, limit_mb=0.1)
+
+    await bot.enforce_buffer_limit()
+    await bot.enforce_buffer_limit()
+
+    assert len(session.text_channel.sent) == 1
+
+
+async def test_stopping_by_hand_and_by_the_limit_produce_the_same_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The whole reason the two paths share one function. Everything after the
+    # opening sentence has to match, or one of them has drifted.
+    monkeypatch.setattr(bot_module, "load_backend", lambda *a, **k: MockBackend(texts=["a line"]))
+
+    bot, session = await recording_at(tmp_path, held_mb=0.5, limit_mb=0.1)
+    await bot.enforce_buffer_limit()
+    automatic = session.text_channel.sent[0][0]
+
+    bot2, _ = await recording_at(tmp_path, held_mb=0.5, limit_mb=1024.0)
+    stop_ctx = FakeContext(1, FakeMember(11, "Alpha"))
+    await command(bot2, "stop")(stop_ctx)
+    requested = stop_ctx.followup.sent[0][0]
+
+    tail = "Transcribed"
+    assert (
+        automatic[automatic.index(tail) :].removesuffix(
+            " Raise MAX_BUFFER_MB to record for longer."
+        )
+        == requested[requested.index(tail) :]
+    )
