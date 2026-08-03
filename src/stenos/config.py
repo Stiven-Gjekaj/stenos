@@ -35,6 +35,15 @@ DEFAULT_BACKEND = BACKEND_AUTO
 DEFAULT_MODEL = "small"
 DEFAULT_SEGMENT_GAP = 0.4
 DEFAULT_MIN_SEGMENT = 0.3
+
+#: Longest a segment may run before it closes for length rather than for
+#: silence. Also the window a Whisper encoder reads.
+DEFAULT_MAX_SEGMENT = 30.0
+
+#: Buffered audio at which a recording stops itself, in megabytes. At the
+#: rate a reduced segment holds, this is about nine hours of speech. Zero
+#: removes the limit, for a host with memory to spare and a reason to use it.
+DEFAULT_MAX_BUFFER_MB = 1024.0
 DEFAULT_OUTPUT_DIR = Path("transcripts")
 
 _TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
@@ -56,6 +65,8 @@ class Config:
     language: str | None = None
     segment_gap: float = DEFAULT_SEGMENT_GAP
     min_segment: float = DEFAULT_MIN_SEGMENT
+    max_segment: float = DEFAULT_MAX_SEGMENT
+    max_buffer_mb: float = DEFAULT_MAX_BUFFER_MB
     keep_audio: bool = False
     output_dir: Path = field(default=DEFAULT_OUTPUT_DIR)
 
@@ -253,6 +264,8 @@ def load_config(env: Mapping[str, str] | None = None, *, use_dotenv: bool = True
         language=_read_language(env),
         segment_gap=_read_float(env, "SEGMENT_GAP", DEFAULT_SEGMENT_GAP, minimum=0.0),
         min_segment=_read_float(env, "MIN_SEGMENT", DEFAULT_MIN_SEGMENT, minimum=0.0),
+        max_segment=_read_float(env, "MAX_SEGMENT", DEFAULT_MAX_SEGMENT, minimum=0.1),
+        max_buffer_mb=_read_float(env, "MAX_BUFFER_MB", DEFAULT_MAX_BUFFER_MB, minimum=0.0),
         keep_audio=_read_bool(env, "KEEP_AUDIO", False),
         output_dir=DEFAULT_OUTPUT_DIR,
     )

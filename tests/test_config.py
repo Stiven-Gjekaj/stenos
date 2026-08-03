@@ -144,3 +144,29 @@ def test_config_can_be_constructed_directly(tmp_path: Path) -> None:
     config = Config(discord_token="abc", output_dir=tmp_path)
     assert config.output_dir == tmp_path
     assert config.whisper_backend == BACKEND_AUTO
+
+
+def test_the_segment_and_buffer_limits_have_defaults() -> None:
+    config = load_config(MINIMAL_ENV)
+
+    assert config.max_segment == pytest.approx(30.0)
+    assert config.max_buffer_mb == pytest.approx(1024.0)
+
+
+def test_the_segment_and_buffer_limits_are_read_from_the_environment() -> None:
+    config = load_config(MINIMAL_ENV | {"MAX_SEGMENT": "12.5", "MAX_BUFFER_MB": "256"})
+
+    assert config.max_segment == pytest.approx(12.5)
+    assert config.max_buffer_mb == pytest.approx(256.0)
+
+
+def test_a_zero_buffer_limit_is_accepted_as_no_limit() -> None:
+    # A host with the memory for it, and a reason to use it.
+    assert load_config(MINIMAL_ENV | {"MAX_BUFFER_MB": "0"}).max_buffer_mb == 0.0
+
+
+def test_a_segment_length_of_zero_is_rejected() -> None:
+    # It would close a segment on every packet, and each one would then be
+    # discarded for being shorter than the minimum.
+    with pytest.raises(ConfigError, match="MAX_SEGMENT"):
+        load_config(MINIMAL_ENV | {"MAX_SEGMENT": "0"})

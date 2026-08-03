@@ -261,7 +261,10 @@ def register_commands(bot: StenosBot, guild_ids: list[int] | None = None) -> Any
         await ctx.defer()
 
         voice_client = await channel.connect()
-        sink = TimestampedSink(segment_gap=bot.config.segment_gap)
+        sink = TimestampedSink(
+            segment_gap=bot.config.segment_gap,
+            max_segment=bot.config.max_segment,
+        )
         session = RecordingSession(
             guild_id=int(guild_id),
             channel_id=int(channel.id),
