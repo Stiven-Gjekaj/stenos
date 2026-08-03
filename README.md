@@ -9,7 +9,7 @@ _One timestamped, speaker-attributed transcript. No audio leaves the machine_
 <p align="center">
   <img src="https://img.shields.io/badge/Python-3.11%20to%203.13-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python 3.11 to 3.13"/>
   <img src="https://img.shields.io/badge/dependencies-3_direct-007ec6?style=for-the-badge" alt="Three direct runtime dependencies"/>
-  <img src="https://img.shields.io/badge/tests-428_passing-427819?style=for-the-badge" alt="428 tests passing"/>
+  <img src="https://img.shields.io/badge/tests-453_passing-427819?style=for-the-badge" alt="453 tests passing"/>
 </p>
 
 <p align="center">
@@ -67,6 +67,10 @@ correct by construction rather than by correction.
 
 **Inference is local.** Audio is buffered in memory during the call and
 transcribed after it ends. Nothing is uploaded, and no API key is involved.
+Each segment is reduced to the 16 kHz mono a model reads as soon as it can no
+longer grow, so an hour of speech holds 115 MB rather than 691, and a
+recording that outgrows `MAX_BUFFER_MB` stops itself and transcribes what it
+captured.
 
 **Apple Silicon is the primary target, without CUDA.** On an M-series machine
 Stenos uses `mlx-whisper`, which runs on the GPU through Metal. Transcription is
@@ -89,6 +93,8 @@ fanless laptop that will thermally throttle under sustained inference.
 - Display names cached as people join, so someone who leaves early is still named
 - Start and stop announced in the text channel, always
 - A recording that captured nothing says which of the two reasons applied
+- Audio reduced to what a model reads as each segment closes, so an hour holds 115 MB
+- A recording that outgrows its buffer stops itself rather than the host
 - Four py-cord defects that lose received audio or end a recording, repaired
 
 </td>
@@ -382,16 +388,16 @@ becomes text, and text becomes one ordered transcript.
 
 | Stage | File | Lines | Responsibility |
 | --- | --- | --- | --- |
-| **Receiving** | sink.py | 393 | Places packets on the media clock they carry and splits segments on silence; loads libopus |
+| **Receiving** | sink.py | 460 | Places packets on the media clock they carry and splits segments on silence; loads libopus |
 | **Transport** | voice.py | 205 | Reads the end-to-end encryption state a voice connection negotiated |
 | **Transport** | upstream.py | 826 | Repairs the py-cord 2.8.1 defects that lose received audio or end a recording, when they are present |
-| **Conversion** | audio.py | 152 | Downmixes and resamples to 16 kHz mono, discarding fragments too short to carry speech |
-| **Verification** | integrity.py | 109 | Separates a recording that captured nothing from a call in which nobody spoke |
+| **Conversion** | audio.py | 297 | Downmixes and resamples to 16 kHz mono, discarding fragments too short to carry speech |
+| **Verification** | integrity.py | 113 | Separates a recording that captured nothing from a call in which nobody spoke |
 | **Transcription** | transcribe.py | 337 | Backend protocol, mlx and faster-whisper implementations, and the segment loop |
 | **Output** | transcript.py | 214 | Merges, orders, and writes the transcript and its sidecar portably |
-| **Commands** | bot.py | 562 | Slash commands, session state, the offline pipeline, and the CLI |
-| **Configuration** | config.py | 258 | Validated environment parsing and platform-aware backend resolution |
-| **Total** | **11 files** | **3082** | Plus 4457 lines of tests |
+| **Commands** | bot.py | 653 | Slash commands, session state, the offline pipeline, and the CLI |
+| **Configuration** | config.py | 271 | Validated environment parsing and platform-aware backend resolution |
+| **Total** | **11 files** | **3402** | Plus 4823 lines of tests |
 
 ```
 src/stenos/      the bot (sink, transport, audio, transcription, output, commands)

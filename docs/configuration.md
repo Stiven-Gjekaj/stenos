@@ -98,6 +98,38 @@ lines like "Thank you." or "Subscribe" from breath noise and keyboard clicks.
 Lower it only if you are losing genuine one-word answers, and expect phantom
 lines in exchange.
 
+### `MAX_SEGMENT`
+
+*Default: `30` seconds.*
+
+The point at which a segment closes for length rather than for silence.
+
+Two reasons, and neither is arbitrary. A speaker who never pauses longer than
+`SEGMENT_GAP` would otherwise hold the whole call in one segment, so nothing
+bounds what is held in memory or the work of reducing it at the end. And 30
+seconds is the window a Whisper encoder reads, so a segment longer than this is
+chunked by the backend anyway, at a boundary you do not choose and with no
+timestamp of its own. Splitting here gives each part the offset it happened at.
+
+A split can land mid-sentence. That is already true of the backend's internal
+chunking, and the bound is worth it.
+
+### `MAX_BUFFER_MB`
+
+*Default: `1024` megabytes. `0` removes the limit.*
+
+Buffered audio at which a recording stops itself, transcribes what it captured,
+and says so in the text channel.
+
+A recording holds about 32,000 bytes for every second of speech, summed across
+speakers, so the default is roughly nine hours before it fires. Nothing else
+bounds a recording: without this, a long enough call ends with the host out of
+memory and the whole recording lost. With it, the call ends early and the
+transcript survives.
+
+Raise it on a host with memory to spare. Set it to `0` only if you would rather
+lose a recording than have one stop on its own.
+
 ---
 
 ## Output

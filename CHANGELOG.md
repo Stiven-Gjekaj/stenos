@@ -8,6 +8,64 @@ of the [README](README.md). A release covers a whole series: every commit
 sharing an `X.N.V` belongs to it, and the tag is cut at the last of them. The
 sections below are therefore headed by the series rather than by one version.
 
+## 0.1.6 (2026-08-02)
+
+The release about how long a call can be. Recording worked; recording for an
+hour did not, and nothing in the code noticed.
+
+### Fixed
+
+- **A recording held the whole call at the rate it arrived.** Discord delivers
+  48 kHz stereo signed 16 bit, which is 192,000 bytes for every second of
+  speech, summed across speakers. None of it was released until transcription
+  finished, which is also the moment the model weights load. An hour of
+  conversation held 691 MB, three hours held 2 GB, and the intended host is a
+  fanless laptop.
+
+  Whisper reads 16 kHz mono, and the conversion to it already existed; it just
+  ran at the end. A segment now drops a channel as its packets arrive, which is
+  exact because averaging a pair of samples depends on nothing outside that
+  pair, and drops its sample rate once it can no longer grow. Measured end to
+  end, a recording holds 32,000 bytes per second of speech instead of 192,000:
+  115 MB per hour rather than 691.
+
+  The audio handed to the backend is the same audio, to within half a step of
+  16 bit, which is the requantisation and nothing else.
+
+- **One speaker who never paused held the whole call in a single segment.**
+  Segments closed on silence alone, so a monologue was unbounded, and the work
+  of reducing it grew with the call. A segment now also closes at 30 seconds,
+  which is the window a Whisper encoder reads, so a long turn is never longer
+  than the context the model has for it and gets a timestamp per part instead
+  of one for all of it.
+
+### Added
+
+- **A recording that outgrows its buffer stops itself.** The reduction is a
+  constant factor rather than a bound, so `MAX_BUFFER_MB` ends a recording that
+  passes it, transcribes what was captured, and says in the channel which
+  setting decided it. Zero removes the limit. The default of 1024 is about nine
+  hours of speech.
+
+  Everything the stop command did after acknowledging moved into
+  `finish_recording`, so a recording that ends itself produces the same
+  transcript and the same message as one that was asked to stop, rather than a
+  second implementation that drifts from the first.
+
+- **`MAX_SEGMENT`**, for the segment length cap, alongside the two thresholds it
+  sits with in `.env.example`.
+
+### Notes
+
+Reducing a segment where it closes was the obvious design and the wrong one.
+Timed against the numpy path, which is the one that has to work because scipy
+is an optional import that no dependency declares, a 30 second segment takes
+74 ms and a 60 second segment 146 ms. Packets arrive every 20 ms, so doing it
+on py-cord's router thread would stall delivery every time somebody stopped
+speaking. A worker drains a queue of closed segments instead; producing 30
+seconds of audio takes 30 seconds and reducing it takes 74 ms, so it cannot
+fall behind.
+
 ## 0.1.5 (2026-08-02)
 
 Three more defects in py-cord's receive path, and the first pass at keeping

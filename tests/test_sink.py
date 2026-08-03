@@ -21,6 +21,7 @@ from stenos.sink import (
 
 #: One Discord voice frame is 20 ms of 48 kHz stereo signed 16 bit audio.
 FRAME_BYTES = BYTES_PER_SECOND // 50
+assert FRAME_BYTES == 3840
 FRAME = b"\x00" * FRAME_BYTES
 
 
@@ -460,3 +461,30 @@ def test_the_length_cap_does_not_split_a_segment_that_ends_first() -> None:
 def test_a_non_positive_maximum_length_is_rejected() -> None:
     with pytest.raises(ValueError, match="max_segment"):
         TimestampedSink(max_segment=0.0)
+
+
+def test_a_long_recording_holds_a_sixth_of_what_arrived() -> None:
+    # The measurement the whole release is for, end to end rather than per
+    # segment: two minutes of continuous speech, crossing several segment
+    # boundaries, held at the rate a model reads instead of the rate it arrived.
+    packets = 120 * 50
+    speech = packets * 0.02
+
+    class Ticking:
+        def __init__(self) -> None:
+            self.now = 0.0
+
+        def __call__(self) -> float:
+            now = self.now
+            self.now += 0.02
+            return now
+
+    sink = TimestampedSink(clock=Ticking(), max_segment=30.0)
+    for _ in range(packets):
+        sink.write(FRAME, 11)
+    sink.cleanup()
+
+    held_per_second = sink.buffered_bytes / speech
+    assert held_per_second == pytest.approx(BYTES_PER_SECOND / 6, rel=0.01)
+    # The cap did its work: no one segment holds the whole two minutes.
+    assert len(sink.segments()) == 4
