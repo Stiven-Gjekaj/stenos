@@ -8,7 +8,7 @@ of the [README](README.md). A release covers a whole series: every commit
 sharing an `X.N.V` belongs to it, and the tag is cut at the last of them. The
 sections below are therefore headed by the series rather than by one version.
 
-## 0.1.6 (2026-08-02)
+## 0.1.6 (2026-08-06)
 
 The release about how long a call can be. Recording worked; recording for an
 hour did not, and nothing in the code noticed.
@@ -54,6 +54,23 @@ hour did not, and nothing in the code noticed.
 
 - **`MAX_SEGMENT`**, for the segment length cap, alongside the two thresholds it
   sits with in `.env.example`.
+
+- **A release is cut by pushing rather than by a person.** Writing a version
+  into `.github/release-version` and pushing to `main` tags the commit and
+  builds the release. Alpha 0.1.5 sat finished and untagged for a day because
+  the only way in was a workflow dispatch, and the fallback of pushing the tag
+  by hand returned 403 from the git proxy.
+
+  Because nothing human now stands between the decision and the tag, the
+  workflow first waits for `ci` and `compat` on that commit and refuses unless
+  both succeeded. It gates on workflow names rather than on the names of
+  individual check runs, since `lint`, `typecheck`, `test (python 3.12)` and the
+  compat matrix all move whenever a job or a matrix changes, and a gate naming
+  them would quietly stop gating. A cancelled run counts as a refusal: `ci`
+  cancels in progress runs when a newer commit lands, so a cancelled one means
+  `main` has moved.
+
+  What arrives is still a draft. Publishing remains a person's decision.
 
 ### Notes
 
