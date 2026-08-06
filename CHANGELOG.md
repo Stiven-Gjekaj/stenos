@@ -62,13 +62,20 @@ hour did not, and nothing in the code noticed.
   by hand returned 403 from the git proxy.
 
   Because nothing human now stands between the decision and the tag, the
-  workflow first waits for `ci` and `compat` on that commit and refuses unless
-  both succeeded. It gates on workflow names rather than on the names of
-  individual check runs, since `lint`, `typecheck`, `test (python 3.12)` and the
-  compat matrix all move whenever a job or a matrix changes, and a gate naming
-  them would quietly stop gating. A cancelled run counts as a refusal: `ci`
-  cancels in progress runs when a newer commit lands, so a cancelled one means
-  `main` has moved.
+  workflow first waits for every other workflow that ran on that commit and
+  refuses unless all of them succeeded. It asks for every one rather than a
+  chosen few, which the first attempt did not: that gate named `ci` and
+  `compat`, and the release went out with `platforms` red. It gates on workflow
+  names rather than on the names of individual check runs, since `lint`,
+  `typecheck`, `test (python 3.12)` and the compat matrix all move whenever a
+  job or a matrix changes, and a gate naming those would quietly stop gating.
+
+  A cancelled run counts as a refusal: `ci` cancels in progress runs when a
+  newer commit lands, so a cancelled one means `main` has moved. Finding no runs
+  at all counts as waiting rather than passing, because the push that starts a
+  release starts the others too. And a series with no section in this file is
+  refused, since `release.yml` would otherwise fall back to generated notes and
+  nobody would find out until afterwards.
 
   What arrives is still a draft. Publishing remains a person's decision.
 
