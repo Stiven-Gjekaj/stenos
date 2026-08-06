@@ -14,10 +14,23 @@ import tomllib
 from pathlib import Path
 
 import pytest
-import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
 WORKFLOWS = ROOT / ".github" / "workflows"
+
+# Everything here asserts something about the repository rather than about the
+# installed package, so it has nothing to say where only the wheel and a copy of
+# the tests are present. platforms.yml is exactly that: it runs the suite from a
+# directory holding tests and pyproject.toml alone, against a clean environment
+# carrying neither .github nor the dev dependencies. Skipping is checked before
+# yaml is imported, because that environment does not have it either.
+if not WORKFLOWS.is_dir():
+    pytest.skip(
+        "not a repository checkout, so there are no workflows to check",
+        allow_module_level=True,
+    )
+
+import yaml  # noqa: E402  after the skip, which must not need a dev dependency
 
 #: Every version in this project, including the one the marker holds.
 VERSION = re.compile(r"^\d+\.\d+\.\d+\.\d+$")
@@ -101,3 +114,34 @@ def test_the_marker_does_not_name_a_release_from_the_future() -> None:
 
 def test_the_packaged_version_is_well_formed() -> None:
     assert VERSION.match(packaged_version()), packaged_version()
+
+
+def test_the_release_gate_requires_every_workflow_not_a_list() -> None:
+    # The first release cut by pushing went out with platforms red, because the
+    # gate named ci and compat and platforms was not on the list. A list has to
+    # be remembered; asking for every workflow that ran does not.
+    steps = workflow("tag.yml")["jobs"]["tag"]["steps"]
+    gate = next(step for step in steps if "green" in step.get("name", ""))
+
+    # Excludes itself by name and requires the rest, rather than naming any.
+    assert "github.workflow" in gate["env"]["SELF"]
+    assert 'select(.name != \\"${SELF}\\")' in gate["run"]
+    assert "ci compat" not in gate["run"]
+
+
+def test_a_release_cannot_go_out_with_no_notes() -> None:
+    steps = workflow("tag.yml")["jobs"]["tag"]["steps"]
+    validate = next(step for step in steps if step.get("name", "").startswith("Validate"))
+
+    assert "CHANGELOG.md" in validate["run"]
+
+
+def test_this_series_has_notes_to_release() -> None:
+    # The same check the workflow makes, so a series without notes fails here
+    # rather than three minutes into a release.
+    series = ".".join(packaged_version().split(".")[:3])
+    heading = re.compile(rf"^## {re.escape(series)}([ \t(]|$)", re.MULTILINE)
+
+    assert heading.search((ROOT / "CHANGELOG.md").read_text(encoding="utf-8")), (
+        f"CHANGELOG.md has no '## {series}' section"
+    )

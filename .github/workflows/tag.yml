@@ -83,67 +83,86 @@ jobs:
           echo "pending=true" >> "$GITHUB_OUTPUT"
 
       # Nothing human stands between the decision to release and the tag any
-      # more, so the checks have to. Gated on workflow names rather than on the
-      # names of individual check runs, because lint, typecheck, test (python
-      # 3.12) and the compat matrix all move whenever a job or a matrix changes,
-      # and a gate that named them would quietly stop gating.
-      - name: Require ci and compat to be green
+      # more, so the checks have to.
+      #
+      # Every workflow that ran for this commit is required, rather than a list
+      # of the ones that seemed to matter. The first release cut this way went
+      # out with platforms red, because platforms had been left off such a list
+      # on the reasoning that it only proves the package installs. It does more
+      # than that: it runs the whole suite against the built wheel in a clean
+      # environment, which is the only thing here that catches a test depending
+      # on a file the wheel does not carry, and that is exactly what it caught.
+      # A list has to be remembered. This does not.
+      #
+      # Workflow names rather than check run names, because lint, typecheck,
+      # test (python 3.12) and the compat matrix all move whenever a job or a
+      # matrix changes, and a gate naming those would quietly stop gating.
+      - name: Require every check on this commit to be green
         if: steps.resolve.outputs.pending == 'true' && inputs.force != true
         env:
           GH_TOKEN: ${{ github.token }}
           SHA: ${{ github.sha }}
           REPO: ${{ github.repository }}
+          SELF: ${{ github.workflow }}
         run: |
           set -euo pipefail
 
-          deadline=$(( SECONDS + 900 ))
-          required="ci compat"
+          deadline=$(( SECONDS + 1200 ))
 
           while :; do
-            waiting=""
-            for workflow in $required; do
-              # Most recent run for this workflow on this commit: a re-run
-              # leaves several, and the last one is the one that counts.
-              state=$(gh api "repos/${REPO}/actions/runs?head_sha=${SHA}&per_page=100" \
-                --jq "[.workflow_runs[] | select(.name == \"${workflow}\")]
-                      | sort_by(.run_started_at) | last
-                      | if . == null then \"absent\"
-                        elif .status != \"completed\" then .status
-                        else .conclusion end")
+            # One line of name=state per workflow, taking the most recent run of
+            # each because a re-run leaves several. This workflow is excluded:
+            # it is the one asking, and release.yml runs inside it.
+            states=$(gh api "repos/${REPO}/actions/runs?head_sha=${SHA}&per_page=100" \
+              --jq "[.workflow_runs[] | select(.name != \"${SELF}\")]
+                    | group_by(.name) | map(sort_by(.run_started_at) | last)
+                    | map(.name + \"=\" + (if .status != \"completed\"
+                                           then .status
+                                           else (.conclusion // \"unknown\") end))
+                    | .[]")
 
-              case "$state" in
-                success)
+            waiting=""
+            refused=""
+            for entry in $states; do
+              case "${entry#*=}" in
+                # A workflow that declined to run has nothing to say.
+                success|skipped|neutral)
                   ;;
-                # Absent is not passing. The push that started this release
-                # started ci and compat too, so for the first few seconds they
-                # do not exist yet.
-                absent|queued|in_progress|waiting|pending|requested)
-                  waiting="$waiting $workflow($state)"
-                  ;;
-                cancelled)
-                  echo "refusing to tag ${SHA}: ${workflow} was cancelled" >&2
-                  echo "ci cancels in progress runs when a newer commit lands, so main has" >&2
-                  echo "moved and this commit is no longer the head of anything" >&2
-                  exit 1
+                queued|in_progress|waiting|pending|requested)
+                  waiting="$waiting $entry"
                   ;;
                 *)
-                  echo "refusing to tag ${SHA}: ${workflow} concluded ${state}" >&2
-                  exit 1
+                  refused="$refused $entry"
                   ;;
               esac
             done
 
-            if [ -z "$waiting" ]; then
-              echo "ci and compat are green for ${SHA}."
+            if [ -n "$refused" ]; then
+              echo "refusing to tag ${SHA}:${refused}" >&2
+              case "$refused" in
+                *cancelled*)
+                  echo "a cancelled run means a newer commit landed while this was waiting," >&2
+                  echo "so main has moved and this commit is no longer the head of anything" >&2
+                  ;;
+              esac
+              exit 1
+            fi
+
+            # Nothing found is not everything passing. The push that started
+            # this release started the other workflows too, so for the first few
+            # seconds none of them exist.
+            if [ -n "$states" ] && [ -z "$waiting" ]; then
+              echo "green for ${SHA}:"
+              for entry in $states; do echo "  $entry"; done
               break
             fi
 
             if [ "$SECONDS" -ge "$deadline" ]; then
-              echo "refusing to tag ${SHA}: still waiting on${waiting} after 15 minutes" >&2
+              echo "refusing to tag ${SHA}: still waiting on${waiting:- any workflow to start}" >&2
               exit 1
             fi
 
-            echo "waiting on${waiting}"
+            echo "waiting on${waiting:- any workflow to start}"
             sleep 15
           done
 
@@ -178,6 +197,18 @@ jobs:
             echo "refusing to tag $VERSION: series $series is already released as $existing" >&2
             echo "bump the alpha component for a new release, or rerun with force" >&2
             exit 1
+          fi
+
+          # release.yml falls back to generated notes when the changelog has no
+          # section for the series, which is the right thing for it to do and
+          # the wrong thing to discover afterwards. A release nobody wrote notes
+          # for is a release nobody finished.
+          if [ "$FORCE" != "true" ]; then
+            if ! grep -qE "^## ${series//./[.]}([ 	(]|$)" CHANGELOG.md; then
+              echo "refusing to tag $VERSION: CHANGELOG.md has no '## $series' section" >&2
+              echo "write the notes for this series, then release it" >&2
+              exit 1
+            fi
           fi
 
           tag="v$VERSION"
