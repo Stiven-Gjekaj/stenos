@@ -506,6 +506,28 @@ An alpha is marked as a pre-release on GitHub, so the two badges resolve from
 what GitHub records rather than from anything kept in step by hand. Everything
 so far is an alpha, which is why the release badge reads `none`.
 
+### Cutting one
+
+Writing a version into `.github/release-version` and pushing to `main` is what
+starts a release. The last commit of a series bumps `pyproject.toml` and writes
+that same version into the marker, and the `tag` workflow does the rest. Between
+releases the file names the last one cut, so a push that touches it for any
+other reason finds nothing to do and says so.
+
+Before it tags anything the workflow waits for `ci` and `compat` to finish on
+that commit and refuses unless both succeeded. A run that was cancelled counts
+as a refusal rather than a pass: `ci` cancels in progress runs when a newer
+commit lands, so a cancelled one means `main` has moved and the commit being
+tagged is no longer the head of anything.
+
+Dispatching `tag` from the Actions tab does the same thing and takes a `force`
+switch, which skips the series and green-checks guards for the times one of them
+is in the way on purpose.
+
+What arrives is a **draft**. Publishing stays a person's decision: the notes are
+worth reading before anyone can download them, and a draft can be deleted
+without leaving a version the world briefly saw.
+
 ---
 
 ## Contributing

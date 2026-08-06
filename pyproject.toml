@@ -1,6 +1,6 @@
 [project]
 name = "stenos"
-version = "0.1.6.3"
+version = "0.1.6.4"
 description = "Discord voice recorder producing timestamped, speaker-attributed transcripts with local inference"
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
@@ -53,6 +53,9 @@ dev = [
     "pytest-cov>=5.0",
     "ruff>=0.8",
     "mypy>=1.13",
+    # Only the tests read yaml, to check that the workflow which cuts a
+    # release still watches the file that starts one.
+    "pyyaml>=6.0",
 ]
 # Kept out of dev so an ordinary checkout does not pull a freezer it will
 # never run. Only the release workflow installs this group.

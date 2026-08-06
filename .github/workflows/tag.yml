@@ -1,12 +1,17 @@
 name: tag
 
-# Creates a release tag by hand. A release covers a whole alpha series: every
-# commit sharing an X.N.V belongs to it, and the tag is cut at the last of
-# them, so the commit counter is normally not zero.
+# Creates a release tag. A release covers a whole alpha series: every commit
+# sharing an X.N.V belongs to it, and the tag is cut at the last of them, so the
+# commit counter is normally not zero.
 #
-# The tag is pushed with the default GITHUB_TOKEN, which does not start
-# another workflow. release.yml is therefore called directly rather than
-# waiting for the tag event that would never arrive.
+# Two ways in. Writing a version into .github/release-version and pushing to
+# main cuts that release, which is the ordinary route and needs nothing beyond a
+# push. Dispatching by hand does the same and adds a force switch, for the times
+# when a guard is in the way on purpose.
+#
+# The tag is pushed with the default GITHUB_TOKEN, which does not start another
+# workflow. release.yml is therefore called directly rather than waiting for the
+# tag event that would never arrive.
 
 on:
   workflow_dispatch:
@@ -16,13 +21,17 @@ on:
         required: true
         type: string
       force:
-        description: "Allow tagging a series that already has a tag"
+        description: "Skip the series and green-checks guards"
         required: false
         default: false
         type: boolean
+  push:
+    branches: [main]
+    paths: [".github/release-version"]
 
 permissions:
   contents: write
+  actions: read
 
 jobs:
   tag:
@@ -35,10 +44,114 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Resolve the version to release
+        id: resolve
+        env:
+          DISPATCHED: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+
+          if [ -n "${DISPATCHED:-}" ]; then
+            version="$DISPATCHED"
+            echo "Releasing $version, dispatched by hand."
+          else
+            # The first line that is neither blank nor a comment.
+            version=$(grep -vE '^\s*(#|$)' .github/release-version | head -n1 | tr -d '[:space:]')
+            echo "Releasing $version, read from .github/release-version."
+          fi
+
+          if [ -z "$version" ]; then
+            echo "no version to release" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+          # Between releases the marker names the last one cut, so a push that
+          # touches this file for any other reason finds its version already
+          # tagged. That is the steady state rather than a mistake, so the run
+          # stops here and succeeds. Asking for it by hand is different: the
+          # answer to "release this now" cannot be silence.
+          if git rev-parse "v$version" >/dev/null 2>&1; then
+            if [ -n "${DISPATCHED:-}" ]; then
+              echo "tag v$version already exists" >&2
+              exit 1
+            fi
+            echo "v$version is already released. Nothing to do."
+            echo "pending=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "pending=true" >> "$GITHUB_OUTPUT"
+
+      # Nothing human stands between the decision to release and the tag any
+      # more, so the checks have to. Gated on workflow names rather than on the
+      # names of individual check runs, because lint, typecheck, test (python
+      # 3.12) and the compat matrix all move whenever a job or a matrix changes,
+      # and a gate that named them would quietly stop gating.
+      - name: Require ci and compat to be green
+        if: steps.resolve.outputs.pending == 'true' && inputs.force != true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.sha }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          deadline=$(( SECONDS + 900 ))
+          required="ci compat"
+
+          while :; do
+            waiting=""
+            for workflow in $required; do
+              # Most recent run for this workflow on this commit: a re-run
+              # leaves several, and the last one is the one that counts.
+              state=$(gh api "repos/${REPO}/actions/runs?head_sha=${SHA}&per_page=100" \
+                --jq "[.workflow_runs[] | select(.name == \"${workflow}\")]
+                      | sort_by(.run_started_at) | last
+                      | if . == null then \"absent\"
+                        elif .status != \"completed\" then .status
+                        else .conclusion end")
+
+              case "$state" in
+                success)
+                  ;;
+                # Absent is not passing. The push that started this release
+                # started ci and compat too, so for the first few seconds they
+                # do not exist yet.
+                absent|queued|in_progress|waiting|pending|requested)
+                  waiting="$waiting $workflow($state)"
+                  ;;
+                cancelled)
+                  echo "refusing to tag ${SHA}: ${workflow} was cancelled" >&2
+                  echo "ci cancels in progress runs when a newer commit lands, so main has" >&2
+                  echo "moved and this commit is no longer the head of anything" >&2
+                  exit 1
+                  ;;
+                *)
+                  echo "refusing to tag ${SHA}: ${workflow} concluded ${state}" >&2
+                  exit 1
+                  ;;
+              esac
+            done
+
+            if [ -z "$waiting" ]; then
+              echo "ci and compat are green for ${SHA}."
+              break
+            fi
+
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              echo "refusing to tag ${SHA}: still waiting on${waiting} after 15 minutes" >&2
+              exit 1
+            fi
+
+            echo "waiting on${waiting}"
+            sleep 15
+          done
+
       - name: Validate the version and create the tag
         id: check
+        if: steps.resolve.outputs.pending == 'true'
         env:
-          VERSION: ${{ inputs.version }}
+          VERSION: ${{ steps.resolve.outputs.version }}
           FORCE: ${{ inputs.force }}
         run: |
           set -euo pipefail
@@ -82,6 +195,9 @@ jobs:
   release:
     name: release
     needs: tag
+    # Empty when the marker named a version that was already released, which
+    # is every push that touches the file for any other reason.
+    if: needs.tag.outputs.tag != ''
     uses: ./.github/workflows/release.yml
     permissions:
       contents: write
