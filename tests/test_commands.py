@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -587,6 +588,59 @@ async def test_a_voice_client_without_the_probe_is_treated_as_connected(
     await bot.enforce_connection()
 
     assert 1 in bot.sessions
+
+
+# Transcription progress. The longest part of a recording, and the only part
+# with nothing to show that it is working.
+
+
+def test_progress_reports_the_first_and_last_segment(caplog: pytest.LogCaptureFixture) -> None:
+    # The first says the work started, the last says it finished rather than
+    # stalled. Everything between is on a timer, so an interval nothing can
+    # reach leaves exactly those two.
+    report = bot_module.log_progress(every=3600.0)
+
+    with caplog.at_level(logging.INFO, logger="stenos"):
+        for done in range(1, 6):
+            report(done, 5)
+
+    assert caplog.messages == [
+        "Transcribed 1 of 5 segments (20%).",
+        "Transcribed 5 of 5 segments (100%).",
+    ]
+
+
+def test_progress_reports_every_segment_when_nothing_is_held_back(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # An hour of conversation is hundreds of segments, which is why the timer
+    # exists. This is what it holds back.
+    report = bot_module.log_progress(every=0.0)
+
+    with caplog.at_level(logging.INFO, logger="stenos"):
+        for done in range(1, 4):
+            report(done, 3)
+
+    assert len(caplog.messages) == 3
+
+
+async def test_stopping_reports_progress_to_the_log(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    # run_pipeline has taken a progress callback since it was written and
+    # nothing ever passed one, so a long call transcribed in silence.
+    monkeypatch.setattr(bot_module, "load_backend", lambda *a, **k: MockBackend(texts=["a line"]))
+    bot = make_bot(tmp_path)
+    channel = FakeVoiceChannel(2, "general", [])
+    author = FakeMember(11, "Alpha", channel=channel)
+    channel.members = [author]
+    await command(bot, "start")(FakeContext(1, author))
+    feed(bot.sessions[1])
+
+    with caplog.at_level(logging.INFO, logger="stenos"):
+        await command(bot, "stop")(FakeContext(1, author))
+
+    assert any("Transcribed" in message and "segments" in message for message in caplog.messages)
 
 
 async def test_stop_reports_a_missing_backend_instead_of_hanging(

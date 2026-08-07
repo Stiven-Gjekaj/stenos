@@ -53,6 +53,7 @@ from .voice import PYCORD_RECEIVE_ISSUE, dave_state, dave_support, receive_suppo
 
 __all__ = [
     "BUFFER_CHECK_SECONDS",
+    "PROGRESS_INTERVAL",
     "RecordingResult",
     "RecordingSession",
     "StenosBot",
@@ -62,6 +63,7 @@ __all__ = [
     "discard_audio",
     "finish_recording",
     "format_duration",
+    "log_progress",
     "main",
     "register_commands",
     "run_pipeline",
@@ -224,7 +226,39 @@ def describe_result(result: RecordingResult, *, stopped: str = "Recording stoppe
 #: seconds of audio, rarely enough to be free.
 BUFFER_CHECK_SECONDS = 15.0
 
+#: Shortest gap between two progress lines, in seconds.
+PROGRESS_INTERVAL = 15.0
+
 log = logging.getLogger("stenos")
+
+
+def log_progress(every: float = PROGRESS_INTERVAL) -> ProgressCallback:
+    """Report transcription to the log, sparingly.
+
+    Transcription is the longest part of a recording and the only part with no
+    outward sign that it is working. A recording that stopped itself has nobody
+    waiting on an interaction either, so the log is the only place its progress
+    can appear at all.
+
+    Reported on a timer rather than per segment, since an hour of conversation
+    is hundreds of them and a line each would bury everything else. The first
+    and last always report: the first is what says the work started, and the
+    last is what says it finished rather than stalled.
+    """
+    # None rather than zero. perf_counter counts from an arbitrary point, and
+    # on a host where that point is recent, zero is a time within the interval
+    # and the opening report is the one held back.
+    last: float | None = None
+
+    def report(done: int, total: int) -> None:
+        nonlocal last
+        now = time.perf_counter()
+        if last is not None and done < total and now - last < every:
+            return
+        last = now
+        log.info("Transcribed %d of %d segments (%.0f%%).", done, total, 100.0 * done / total)
+
+    return report
 
 
 class StenosBot(discord.Bot):  # type: ignore[misc]
@@ -509,6 +543,7 @@ async def finish_recording(
             config=bot.config,
             backend=backend,
             recorded_at=session.started_at,
+            progress=log_progress(),
         )
     except BackendUnavailableError as error:
         log.error("Transcription backend unavailable: %s", error)

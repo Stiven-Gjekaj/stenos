@@ -77,6 +77,17 @@ stopped receiving anything.
   connect timeout, and a connection that comes back clears the clock rather
   than leaving it for the next outage to inherit.
 
+- **Transcription reported nothing while it ran.** It is the longest part of a
+  recording, and `run_pipeline` had taken a progress callback since it was
+  written that nothing ever passed, so an hour of conversation produced no
+  output at all between the stop command and the transcript. A recording that
+  stopped itself had nobody waiting on an interaction either, which left the
+  log the only place its progress could appear and nothing in it.
+
+  It now reports to the log on a timer, since an hour is hundreds of segments
+  and a line each would bury everything else. The first and last always report:
+  one says the work started, the other distinguishes finished from stalled.
+
 ### Added
 
 - **`DISCONNECT_GRACE`**, for how long to wait, alongside the other limits in
