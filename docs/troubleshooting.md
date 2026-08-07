@@ -98,14 +98,25 @@ it immediately, and let the short transcription pull the weights.
 
 ## The recording stopped on its own
 
-The realistic cause is the host losing network or going to sleep. Stenos posts a
-message when recording starts and another when it stops, so a missing stop
-message means the process died rather than finishing.
+A recording ends on its own for one of three reasons, and each says which in
+the message it posts.
 
-See the operational notes in the [README](../README.md) for the sleep and power
-settings each platform needs for an unattended run. In short: `caffeinate -is`
-on macOS with the lid open and mains power, masked sleep targets on Linux, and
-`powercfg` with the lid action set to do nothing on Windows.
+**The voice connection was lost.** The host lost its network, or the bot was
+disconnected, kicked, or moved to another channel. Everything captured before
+that point is transcribed and written out. A network loss waits
+`DISCONNECT_GRACE` first, because a reconnect reads as disconnected while it
+runs; the others end it at once.
+
+**The buffer limit was reached.** `MAX_BUFFER_MB` of audio was held. Raise it,
+or set it to `0` on a host with the memory to spare.
+
+**The process died.** This is the one with no message, which is what makes a
+missing stop message the signal. The realistic cause is the host going to
+sleep. See the operational notes in the [README](../README.md) for the sleep
+and power settings each platform needs for an unattended run: in short,
+`caffeinate -is` on macOS with the lid open and mains power, masked sleep
+targets on Linux, and `powercfg` with the lid action set to do nothing on
+Windows.
 
 ---
 

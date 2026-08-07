@@ -135,6 +135,22 @@ A recording that received no packets is reported as such rather than presented
 as an empty transcript, and a failed transcription is reported rather than left
 as a deferred response that never resolves.
 
+Three things end a recording, and only one of them is the stop command. The
+buffer ceiling and a lost voice connection end it too, so `finish_recording`
+holds everything the stop command did after acknowledging: a recording that
+ends itself produces the same transcript and the same message as one that was
+asked to stop, differing only in the sentence that opens it. Having no
+interaction to answer, it posts to the channel the recording was started from.
+
+The two automatic reasons are found differently. A ceiling is measured, so a
+watchdog loop measures it, every `BUFFER_CHECK_SECONDS`. A disconnect usually
+announces itself, and `on_voice_state_update` acts on it at once, which also
+covers being kicked or moved. But losing the network loses the gateway with
+it, and no event arrives to say so, so the same watchdog reads the voice
+connection's own state and waits `DISCONNECT_GRACE` before believing it:
+py-cord reconnects and resumes on its own and reads as disconnected for the
+whole of the attempt.
+
 ---
 
 ## Adding a backend

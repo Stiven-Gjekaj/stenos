@@ -69,8 +69,8 @@ correct by construction rather than by correction.
 transcribed after it ends. Nothing is uploaded, and no API key is involved.
 Each segment is reduced to the 16 kHz mono a model reads as soon as it can no
 longer grow, so an hour of speech holds 115 MB rather than 691, and a
-recording that outgrows `MAX_BUFFER_MB` stops itself and transcribes what it
-captured.
+recording that outgrows `MAX_BUFFER_MB`, or loses its voice connection, stops
+itself and transcribes what it captured.
 
 **Apple Silicon is the primary target, without CUDA.** On an M-series machine
 Stenos uses `mlx-whisper`, which runs on the GPU through Metal. Transcription is
@@ -270,10 +270,15 @@ powercfg /change standby-timeout-ac 0
 powercfg /change hibernate-timeout-ac 0
 ```
 
-**Every platform.** The realistic failure is the host losing network mid-call,
-which ends the recording silently. Stenos posts start and stop messages for
-exactly this reason, so a missing stop message is the signal that something
-went wrong.
+**Every platform.** The realistic failure is the host losing network mid-call.
+The recording ends itself once the connection has been gone for
+`DISCONNECT_GRACE`, transcribes what it captured, and says in the channel that
+the connection was lost, so a call interrupted this way costs the part after
+the interruption rather than all of it. Being disconnected, kicked, or moved
+ends it the same way and without waiting, since those arrive as events.
+
+A missing stop message therefore means the process itself died, which is what
+the power settings above are for.
 
 ---
 
