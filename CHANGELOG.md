@@ -47,7 +47,7 @@ recording path changes here.
   0.1.6 changed to every workflow that ran, for the reason that change records.
   And the test count badge read 453 against 474 tests.
 
-## 0.2.1 (unreleased)
+## 0.2.1 (2026-08-07)
 
 The first of the maintenance alphas. About a recording noticing that it has
 stopped receiving anything.
