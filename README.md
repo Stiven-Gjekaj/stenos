@@ -9,7 +9,7 @@ _One timestamped, speaker-attributed transcript. No audio leaves the machine_
 <p align="center">
   <img src="https://img.shields.io/badge/Python-3.11%20to%203.13-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python 3.11 to 3.13"/>
   <img src="https://img.shields.io/badge/dependencies-3_direct-007ec6?style=for-the-badge" alt="Three direct runtime dependencies"/>
-  <img src="https://img.shields.io/badge/tests-453_passing-427819?style=for-the-badge" alt="453 tests passing"/>
+  <img src="https://img.shields.io/badge/tests-474_passing-427819?style=for-the-badge" alt="474 tests passing"/>
 </p>
 
 <p align="center">
@@ -132,9 +132,9 @@ On Windows, in PowerShell:
 irm https://raw.githubusercontent.com/Stiven-Gjekaj/stenos/main/scripts/install.ps1 | iex
 ```
 
-Both install the newest **stable** release. Every release so far is an alpha,
-published as a pre-release, so until the first beta those commands will report
-that there is no stable release and tell you to ask for a pre-release instead:
+Both install the newest **stable** release. Alphas are published as
+pre-releases and the default passes over them, so to take the newest release of
+any kind instead:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/Stiven-Gjekaj/stenos/main/scripts/install.sh | sh -s -- --pre
@@ -513,11 +513,15 @@ that same version into the marker, and the `tag` workflow does the rest. Between
 releases the file names the last one cut, so a push that touches it for any
 other reason finds nothing to do and says so.
 
-Before it tags anything the workflow waits for `ci` and `compat` to finish on
-that commit and refuses unless both succeeded. A run that was cancelled counts
-as a refusal rather than a pass: `ci` cancels in progress runs when a newer
-commit lands, so a cancelled one means `main` has moved and the commit being
-tagged is no longer the head of anything.
+Before it tags anything the workflow waits for every other workflow that ran on
+that commit and refuses unless all of them succeeded. Every one, rather than the
+ones that seem to matter: the first release cut this way went out with
+`platforms` red, because `platforms` had been left off exactly such a list. A
+run that was cancelled counts as a refusal rather than a pass: `ci` cancels in
+progress runs when a newer commit lands, so a cancelled one means `main` has
+moved and the commit being tagged is no longer the head of anything. A series
+with no section in the changelog is refused as well, since the notes are the
+part nobody can generate afterwards.
 
 Dispatching `tag` from the Actions tab does the same thing and takes a `force`
 switch, which skips the series and green-checks guards for the times one of them

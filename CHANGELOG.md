@@ -40,6 +40,13 @@ recording path changes here.
   shapes the endpoint returns. The single release the default path reads is not
   the array the `--pre` path reads, and one `sed` parses both.
 
+- **Three claims in the README that were about to expire, or already had.** The
+  quick start explained that the default install command would report there is
+  no stable release until the first beta, which is this one. The section on
+  cutting a release still said the workflow waits for `ci` and `compat`, which
+  0.1.6 changed to every workflow that ran, for the reason that change records.
+  And the test count badge read 453 against 474 tests.
+
 ## 0.1.6 (2026-08-06)
 
 The release about how long a call can be. Recording worked; recording for an
