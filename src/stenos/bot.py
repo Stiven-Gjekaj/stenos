@@ -265,6 +265,29 @@ class StenosBot(discord.Bot):  # type: ignore[misc]
             self.sessions.pop(session.guild_id, None)
         return over
 
+    async def finish_and_report(
+        self,
+        session: RecordingSession,
+        *,
+        stopped: str,
+        closing: str = "",
+    ) -> None:
+        """Finish a recording nobody asked to stop, and post what came of it.
+
+        There is no interaction to answer, so what the stop command would have
+        replied goes to the channel the recording was started from instead.
+        Sending is guarded: that channel may be gone by now, and failing to
+        announce a transcript must not discard one already written to disk.
+        """
+        message, attachment = await finish_recording(
+            self, session, stopped=stopped, closing=closing
+        )
+        with contextlib.suppress(Exception):
+            if attachment is None:
+                await session.text_channel.send(message)
+            else:
+                await session.text_channel.send(message, file=attachment)
+
     async def enforce_buffer_limit(self) -> None:
         """End any recording that has outgrown the ceiling, and say why.
 
@@ -279,8 +302,7 @@ class StenosBot(discord.Bot):  # type: ignore[misc]
                 session.channel_name,
                 held,
             )
-            message, attachment = await finish_recording(
-                self,
+            await self.finish_and_report(
                 session,
                 stopped=(
                     f"Recording stopped at the {self.config.max_buffer_mb:g} MB buffer "
@@ -288,19 +310,66 @@ class StenosBot(discord.Bot):  # type: ignore[misc]
                 ),
                 closing="Raise MAX_BUFFER_MB to record for longer.",
             )
-            with contextlib.suppress(Exception):
-                if attachment is None:
-                    await session.text_channel.send(message)
-                else:
-                    await session.text_channel.send(message, file=attachment)
+
+    def is_self(self, member: Any) -> bool:
+        """Whether a voice state update is about this bot rather than a participant."""
+        user = self.user
+        if user is None:
+            return False
+        return int(getattr(member, "id", 0)) == int(user.id)
 
     async def on_voice_state_update(self, member: Any, before: Any, after: Any) -> None:
-        """Cache the display name of anyone who joins a channel being recorded."""
+        """Track a recorded channel's membership, and notice the bot leaving it."""
         session = self.sessions.get(getattr(member.guild, "id", 0))
         if session is None:
             return
+
+        if self.is_self(member):
+            await self.left_the_channel(session, after)
+            return
+
         if getattr(after.channel, "id", None) == session.channel_id:
             session.remember(member)
+
+    async def left_the_channel(self, session: RecordingSession, after: Any) -> None:
+        """End a recording when the bot is no longer in the channel it records.
+
+        Being disconnected and being dragged into another channel arrive as the
+        same event and end the recording the same way. Neither can be carried
+        on through: what was captured belongs to the channel the transcript is
+        named after, and a recording that quietly followed the bot elsewhere
+        would file one call's speech under another's.
+
+        Until now nothing watched for this. The audio stayed in memory with the
+        session still registered, so the bot went on reporting a recording that
+        was receiving nothing, and the call was lost unless somebody thought to
+        run the stop command.
+        """
+        channel_id = getattr(getattr(after, "channel", None), "id", None)
+        if channel_id == session.channel_id:
+            return
+
+        # Deregistered here, since the handler above only looked the session up.
+        # Discord repeats voice state updates, so a session left registered
+        # would be transcribed once per arrival.
+        if self.sessions.pop(session.guild_id, None) is None:
+            return
+
+        if channel_id is None:
+            log.warning("Disconnected from %s, stopping the recording.", session.channel_name)
+            reason = f"disconnected from {session.channel_name}"
+        else:
+            log.warning("Moved out of %s, stopping the recording.", session.channel_name)
+            reason = f"moved out of {session.channel_name}"
+
+        await self.finish_and_report(
+            session,
+            stopped=(
+                f"Recording stopped after {format_duration(session.elapsed())}: "
+                f"the bot was {reason}"
+            ),
+            closing="Everything captured up to that point was transcribed.",
+        )
 
 
 async def finish_recording(

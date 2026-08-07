@@ -47,6 +47,23 @@ recording path changes here.
   0.1.6 changed to every workflow that ran, for the reason that change records.
   And the test count badge read 453 against 474 tests.
 
+## 0.2.1 (unreleased)
+
+The first of the maintenance alphas. About a recording noticing that it has
+stopped receiving anything.
+
+### Fixed
+
+- **Nothing noticed the bot leaving the channel it was recording.** Being
+  disconnected, kicked, or dragged into another channel all left the session
+  registered and the audio in memory, so the bot went on describing a recording
+  that was receiving nothing and the call was lost unless somebody thought to
+  run the stop command. All three now end the recording, transcribe what was
+  captured, and say in the channel which of them happened.
+
+  A move ends it rather than following the bot, because what was captured
+  belongs to the channel the transcript is named after.
+
 ## 0.1.6 (2026-08-06)
 
 The release about how long a call can be. Recording worked; recording for an

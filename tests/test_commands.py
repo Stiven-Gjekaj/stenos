@@ -397,6 +397,106 @@ async def test_voice_state_updates_for_other_channels_are_ignored(tmp_path: Path
     assert 55 not in bot.sessions[1].names
 
 
+# Losing the voice connection. Nothing used to notice, so the audio sat in
+# memory with the session still registered and the call was lost unless
+# somebody thought to run the stop command.
+
+#: The bot's own user id, for the voice state updates that are about itself.
+SELF_ID = 999
+
+
+async def recording_with_self(tmp_path: Path, **overrides: Any) -> tuple[Any, Any, Any]:
+    """A started recording, on a bot that knows which member it is."""
+    bot = make_bot(tmp_path, **overrides)
+    # bot.user reads through to the connection state, which is empty until a
+    # real login. A bot that does not know itself cannot tell its own voice
+    # state update from a participant's.
+    bot._connection.user = SimpleNamespace(id=SELF_ID)
+    channel = FakeVoiceChannel(2, "general", [])
+    author = FakeMember(11, "Alpha", channel=channel)
+    channel.members = [author]
+    await command(bot, "start")(FakeContext(1, author))
+    return bot, channel, bot.sessions[1]
+
+
+def self_state(channel: Any) -> tuple[Any, Any]:
+    """The bot's own member, and the voice state naming where it now is."""
+    member = FakeMember(SELF_ID, "stenos")
+    member.guild = FakeGuild(1)  # type: ignore[attr-defined]
+    return member, FakeVoiceState(channel)
+
+
+async def test_being_disconnected_ends_the_recording(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(bot_module, "load_backend", lambda *a, **k: MockBackend(texts=["a line"]))
+    bot, channel, session = await recording_with_self(tmp_path)
+    feed(session)
+
+    member, gone = self_state(None)
+    await bot.on_voice_state_update(member, FakeVoiceState(channel), gone)
+
+    assert 1 not in bot.sessions
+    (message, _attachment) = session.text_channel.sent[0]
+    assert "disconnected from general" in message
+    # The point of noticing at all: what was captured is still written out.
+    assert "Transcribed" in message
+
+
+async def test_being_moved_to_another_channel_ends_the_recording(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Carrying on would file this call's speech under the other channel's name.
+    monkeypatch.setattr(bot_module, "load_backend", lambda *a, **k: MockBackend(texts=["a line"]))
+    bot, channel, session = await recording_with_self(tmp_path)
+    feed(session)
+
+    member, moved = self_state(FakeVoiceChannel(77, "elsewhere", []))
+    await bot.on_voice_state_update(member, FakeVoiceState(channel), moved)
+
+    assert 1 not in bot.sessions
+    assert "moved out of general" in session.text_channel.sent[0][0]
+
+
+async def test_the_bot_muting_itself_does_not_end_the_recording(tmp_path: Path) -> None:
+    # Every mute, deafen and server change arrives as a voice state update for
+    # the same channel. Only leaving it means anything.
+    bot, channel, _session = await recording_with_self(tmp_path)
+
+    member, same = self_state(channel)
+    await bot.on_voice_state_update(member, FakeVoiceState(channel), same)
+
+    assert 1 in bot.sessions
+
+
+async def test_a_participant_leaving_does_not_end_the_recording(tmp_path: Path) -> None:
+    # The check is on identity, not on the channel being empty. One person
+    # leaving a call is not the call ending.
+    bot, channel, _session = await recording_with_self(tmp_path)
+
+    leaver = FakeMember(11, "Alpha")
+    leaver.guild = FakeGuild(1)  # type: ignore[attr-defined]
+    await bot.on_voice_state_update(leaver, FakeVoiceState(channel), FakeVoiceState(None))
+
+    assert 1 in bot.sessions
+
+
+async def test_a_disconnect_is_only_acted_on_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Discord repeats voice state updates, and the buffer check runs on its own
+    # loop. Two arrivals must not transcribe the same recording twice.
+    monkeypatch.setattr(bot_module, "load_backend", lambda *a, **k: MockBackend())
+    bot, channel, session = await recording_with_self(tmp_path)
+    feed(session)
+
+    member, gone = self_state(None)
+    await bot.on_voice_state_update(member, FakeVoiceState(channel), gone)
+    await bot.on_voice_state_update(member, FakeVoiceState(channel), gone)
+
+    assert len(session.text_channel.sent) == 1
+
+
 async def test_stop_reports_a_missing_backend_instead_of_hanging(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
