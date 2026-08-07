@@ -143,13 +143,20 @@ asked to stop, differing only in the sentence that opens it. Having no
 interaction to answer, it posts to the channel the recording was started from.
 
 The two automatic reasons are found differently. A ceiling is measured, so a
-watchdog loop measures it, every `BUFFER_CHECK_SECONDS`. A disconnect usually
-announces itself, and `on_voice_state_update` acts on it at once, which also
-covers being kicked or moved. But losing the network loses the gateway with
-it, and no event arrives to say so, so the same watchdog reads the voice
-connection's own state and waits `DISCONNECT_GRACE` before believing it:
-py-cord reconnects and resumes on its own and reads as disconnected for the
-whole of the attempt.
+watchdog loop measures it, every `BUFFER_CHECK_SECONDS`.
+
+A lost connection is harder, because the event that reports one is ambiguous
+and the worst case sends no event at all. Losing the network loses the gateway
+with it, so nothing arrives to say so; and when something does arrive, py-cord
+asks Discord to remove the bot from the channel before every reconnect, so a
+recovery and a kick look identical. The same watchdog therefore reads the voice
+connection's own state and waits `DISCONNECT_GRACE` before believing it, since
+a reconnect reads as disconnected for the whole of its attempt.
+`on_voice_state_update` only starts that clock early.
+
+The exception is a move to a different channel, which a reconnect never
+produces because it rejoins the channel it left. That ends the recording at
+once.
 
 ---
 

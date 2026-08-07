@@ -448,21 +448,33 @@ class StenosBot(discord.Bot):  # type: ignore[misc]
             session.remember(member)
 
     async def left_the_channel(self, session: RecordingSession, after: Any) -> None:
-        """End a recording when the bot is no longer in the channel it records.
+        """React to the bot's own voice state changing during a recording.
 
-        Being disconnected and being dragged into another channel arrive as the
-        same event and end the recording the same way. Neither can be carried
-        on through: what was captured belongs to the channel the transcript is
-        named after, and a recording that quietly followed the bot elsewhere
-        would file one call's speech under another's.
+        Being moved to another channel ends the recording at once. It cannot be
+        carried on through: what was captured belongs to the channel the
+        transcript is named after, and a recording that quietly followed the
+        bot elsewhere would file one call's speech under another's. A reconnect
+        rejoins the channel it left, so a different one is always a real move.
 
-        Until now nothing watched for this. The audio stayed in memory with the
-        session still registered, so the bot went on reporting a recording that
-        was receiving nothing, and the call was lost unless somebody thought to
-        run the stop command.
+        Leaving the channel entirely does not end it, though it looks like the
+        clearer signal of the two. py-cord's reconnect asks Discord to remove
+        the bot from the channel before rejoining, so this arrives during a
+        recovery exactly as it does during a kick, and nothing here can tell
+        them apart. It starts the disconnect clock instead and leaves the
+        decision to the grace period, which costs a kicked recording that grace
+        and saves a recovering one entirely.
         """
         channel_id = getattr(getattr(after, "channel", None), "id", None)
         if channel_id == session.channel_id:
+            return
+
+        if channel_id is None:
+            if session.disconnected_since is None:
+                session.disconnected_since = time.perf_counter()
+                log.warning(
+                    "Removed from %s. Waiting to see whether it is a reconnect.",
+                    session.channel_name,
+                )
             return
 
         # Deregistered here, since the handler above only looked the session up.
@@ -471,18 +483,12 @@ class StenosBot(discord.Bot):  # type: ignore[misc]
         if self.sessions.pop(session.guild_id, None) is None:
             return
 
-        if channel_id is None:
-            log.warning("Disconnected from %s, stopping the recording.", session.channel_name)
-            reason = f"disconnected from {session.channel_name}"
-        else:
-            log.warning("Moved out of %s, stopping the recording.", session.channel_name)
-            reason = f"moved out of {session.channel_name}"
-
+        log.warning("Moved out of %s, stopping the recording.", session.channel_name)
         await self.finish_and_report(
             session,
             stopped=(
                 f"Recording stopped after {format_duration(session.elapsed())}: "
-                f"the bot was {reason}"
+                f"the bot was moved out of {session.channel_name}"
             ),
             closing="Everything captured up to that point was transcribed.",
         )

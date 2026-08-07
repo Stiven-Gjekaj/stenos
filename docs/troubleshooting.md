@@ -102,10 +102,14 @@ A recording ends on its own for one of three reasons, and each says which in
 the message it posts.
 
 **The voice connection was lost.** The host lost its network, or the bot was
-disconnected, kicked, or moved to another channel. Everything captured before
-that point is transcribed and written out. A network loss waits
-`DISCONNECT_GRACE` first, because a reconnect reads as disconnected while it
-runs; the others end it at once.
+kicked from the channel. Everything captured before that point is transcribed
+and written out. Both wait `DISCONNECT_GRACE` first, because a reconnect reads
+as disconnected while it runs and asks Discord to remove the bot before
+rejoining, so neither can be told from a recovery at the moment it happens.
+
+**The bot was moved to another channel.** That one ends the recording at once,
+since a reconnect always rejoins the channel it left. Carrying on would file
+this call's speech under the other channel's name.
 
 **The buffer limit was reached.** `MAX_BUFFER_MB` of audio was held. Raise it,
 or set it to `0` on a host with the memory to spare.

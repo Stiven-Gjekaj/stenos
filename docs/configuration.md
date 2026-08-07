@@ -144,8 +144,14 @@ for the whole of that attempt, so this cannot be short: its connect timeout
 alone is 30 seconds, and a recording ended during a recovery is a recording cut
 in half for no reason.
 
-Being disconnected, kicked, or moved is different. Those arrive as events and
-end the recording at once, without waiting.
+Being moved to another channel is different. That arrives as an event, cannot
+be anything but a real move, and ends the recording at once. Being removed from
+the channel waits like a network loss does, because py-cord's reconnect asks
+Discord to remove the bot before rejoining and the two are indistinguishable
+when the event arrives.
+
+Setting this to `0` therefore leaves a kicked recording running too, since
+nothing else ends one.
 
 ---
 

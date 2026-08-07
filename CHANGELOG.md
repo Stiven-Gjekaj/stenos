@@ -58,11 +58,17 @@ stopped receiving anything.
   disconnected, kicked, or dragged into another channel all left the session
   registered and the audio in memory, so the bot went on describing a recording
   that was receiving nothing and the call was lost unless somebody thought to
-  run the stop command. All three now end the recording, transcribe what was
-  captured, and say in the channel which of them happened.
+  run the stop command. All three now end the recording and transcribe what was
+  captured.
 
-  A move ends it rather than following the bot, because what was captured
-  belongs to the channel the transcript is named after.
+  A move ends it at once rather than following the bot, because what was
+  captured belongs to the channel the transcript is named after. Being removed
+  from the channel does not, despite looking like the clearer signal of the
+  two: py-cord's reconnect asks Discord to remove the bot before rejoining, so
+  that event arrives during a recovery exactly as it does during a kick and
+  nothing can tell them apart at the point it arrives. It starts the clock
+  below instead, which costs a kicked recording the grace and saves a
+  recovering one entirely.
 
 - **A host that lost its network kept the recording anyway.** That case sends
   no event, because losing the network loses the gateway with it, so the voice

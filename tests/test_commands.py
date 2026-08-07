@@ -432,21 +432,56 @@ def self_state(channel: Any) -> tuple[Any, Any]:
     return member, FakeVoiceState(channel)
 
 
-async def test_being_disconnected_ends_the_recording(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+async def test_being_removed_starts_the_clock_rather_than_ending_at_once(
+    tmp_path: Path,
 ) -> None:
-    monkeypatch.setattr(bot_module, "load_backend", lambda *a, **k: MockBackend(texts=["a line"]))
+    # py-cord's reconnect asks Discord to remove the bot from the channel
+    # before rejoining it, so this event arrives during a recovery as well as
+    # during a kick. Ending here would cut every recovery short.
     bot, channel, session = await recording_with_self(tmp_path)
-    feed(session)
 
     member, gone = self_state(None)
     await bot.on_voice_state_update(member, FakeVoiceState(channel), gone)
 
+    assert 1 in bot.sessions
+    assert session.disconnected_since is not None
+
+
+async def test_being_removed_for_good_ends_the_recording(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The kick, told apart from the reconnect by the connection not coming
+    # back. What was captured is still written out, which is the whole point.
+    monkeypatch.setattr(bot_module, "load_backend", lambda *a, **k: MockBackend(texts=["a line"]))
+    bot, channel, session = await recording_with_self(tmp_path, disconnect_grace=0.01)
+    feed(session)
+
+    member, gone = self_state(None)
+    await bot.on_voice_state_update(member, FakeVoiceState(channel), gone)
+    channel.voice_client.connected = False
+    time.sleep(0.02)
+    await bot.enforce_connection()
+
     assert 1 not in bot.sessions
     (message, _attachment) = session.text_channel.sent[0]
-    assert "disconnected from general" in message
-    # The point of noticing at all: what was captured is still written out.
+    assert "was lost and did not come back" in message
     assert "Transcribed" in message
+
+
+async def test_a_reconnect_leaves_the_recording_running(tmp_path: Path) -> None:
+    # The other half of the same pair. Removed, then back on the same channel,
+    # which is what py-cord's own reconnect looks like from here.
+    bot, channel, session = await recording_with_self(tmp_path)
+
+    member, gone = self_state(None)
+    await bot.on_voice_state_update(member, FakeVoiceState(channel), gone)
+    # Back on the same channel. The clock is the watchdog's to clear, since a
+    # connection reading as up is the evidence, not the event.
+    await bot.on_voice_state_update(member, gone, FakeVoiceState(channel))
+    await bot.enforce_connection()
+
+    assert 1 in bot.sessions
+    assert session.disconnected_since is None
 
 
 async def test_being_moved_to_another_channel_ends_the_recording(
@@ -487,7 +522,7 @@ async def test_a_participant_leaving_does_not_end_the_recording(tmp_path: Path) 
     assert 1 in bot.sessions
 
 
-async def test_a_disconnect_is_only_acted_on_once(
+async def test_a_move_is_only_acted_on_once(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # Discord repeats voice state updates, and the buffer check runs on its own
@@ -496,9 +531,9 @@ async def test_a_disconnect_is_only_acted_on_once(
     bot, channel, session = await recording_with_self(tmp_path)
     feed(session)
 
-    member, gone = self_state(None)
-    await bot.on_voice_state_update(member, FakeVoiceState(channel), gone)
-    await bot.on_voice_state_update(member, FakeVoiceState(channel), gone)
+    member, moved = self_state(FakeVoiceChannel(77, "elsewhere", []))
+    await bot.on_voice_state_update(member, FakeVoiceState(channel), moved)
+    await bot.on_voice_state_update(member, FakeVoiceState(channel), moved)
 
     assert len(session.text_channel.sent) == 1
 
