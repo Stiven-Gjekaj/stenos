@@ -8,7 +8,7 @@ of the [README](README.md). A release covers a whole series: every commit
 sharing an `X.N.V` belongs to it, and the tag is cut at the last of them. The
 sections below are therefore headed by the series rather than by one version.
 
-## 0.2.0 (unreleased)
+## 0.2.0 (2026-08-07)
 
 The first beta, and the first release that is not a pre-release. It opens the
 maintenance line: fixes and upkeep, cut as alphas whenever enough of them
