@@ -117,9 +117,12 @@ if [ -z "$version" ]; then
     else
         # releases/latest is defined as the newest release that is neither a
         # draft nor a pre-release, which is exactly the stable one wanted here.
+        # It answers 404 while a project has only pre-releases, so nothing is
+        # read out; a failed request looks the same from here, which is why the
+        # message below names neither cause as the one that happened.
         version=$(fetch "https://api.github.com/repos/$REPO/releases/latest" | tag_from_json)
-        [ -n "$version" ] || fail "no stable release yet. Every release so far is a
-pre-release, so install the newest of those with:
+        [ -n "$version" ] || fail "cannot work out the newest stable release. If this
+project has only pre-releases, install the newest of those with:
   curl -fsSL $RAW_URL | sh -s -- --pre"
     fi
 fi

@@ -57,8 +57,10 @@ if (-not $Version) {
     else {
         # releases/latest is defined as the newest release that is neither a
         # draft nor a pre-release, which is exactly the stable one wanted here.
-        # It answers 404 when there is no stable release, which is not an error
-        # worth a stack trace when the advice is simply to pass -Pre.
+        # It answers 404 while a project has only pre-releases, which is not an
+        # error worth a stack trace. The catch cannot tell that apart from a
+        # request that failed, which is why the message below names neither
+        # cause as the one that happened.
         try {
             $latest = Invoke-RestMethod "https://api.github.com/repos/$Repo/releases/latest"
             $Version = $latest.tag_name
@@ -67,7 +69,7 @@ if (-not $Version) {
             $Version = ""
         }
         if (-not $Version) {
-            Fail "no stable release yet. Every release so far is a pre-release, so run this again with -Pre to install the newest of those."
+            Fail "cannot work out the newest stable release. If this project has only pre-releases, run this again with -Pre to install the newest of those."
         }
     }
 }

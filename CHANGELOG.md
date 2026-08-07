@@ -26,6 +26,20 @@ recording path changes here.
   nothing to install. It is now the same query as its neighbour without
   `include_prereleases`, and a test refuses a hardcoded value in its place.
 
+- **Both install scripts said every release was a pre-release.** That was the
+  reason the default path could not resolve a version, and it stops being the
+  reason the moment a stable release exists. After that the same message could
+  only appear because a request failed, while naming a cause that no longer
+  applies. Neither script can tell the two apart, so neither claims to: they
+  now report that the newest stable release could not be worked out, and
+  suggest `--pre` for a project that has only pre-releases.
+
+  The path itself is unchanged. It has also never run, since `releases/latest`
+  answers 404 until a release is neither a draft nor a pre-release, so
+  `install.sh` is now exercised end to end against captured payloads for both
+  shapes the endpoint returns. The single release the default path reads is not
+  the array the `--pre` path reads, and one `sed` parses both.
+
 ## 0.1.6 (2026-08-06)
 
 The release about how long a call can be. Recording worked; recording for an
