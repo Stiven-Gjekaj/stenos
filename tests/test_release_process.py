@@ -129,6 +129,20 @@ def test_the_release_gate_requires_every_workflow_not_a_list() -> None:
     assert "ci compat" not in gate["run"]
 
 
+def test_the_release_badge_resolves_from_github() -> None:
+    # It read release-none for the whole alpha run, a hardcoded value sitting
+    # beside a claim that both version badges resolve from what GitHub records.
+    # Publishing the first beta is what makes the difference visible, and by
+    # then whoever read it has already concluded there is nothing to install.
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+
+    assert "img.shields.io/badge/release-" not in readme
+
+    badge = next(line for line in readme.splitlines() if "label=release" in line)
+    assert "img.shields.io/github/v/release/" in badge
+    assert "include_prereleases" not in badge
+
+
 def test_a_release_cannot_go_out_with_no_notes() -> None:
     steps = workflow("tag.yml")["jobs"]["tag"]["steps"]
     validate = next(step for step in steps if step.get("name", "").startswith("Validate"))

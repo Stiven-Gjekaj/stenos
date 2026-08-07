@@ -8,6 +8,24 @@ of the [README](README.md). A release covers a whole series: every commit
 sharing an `X.N.V` belongs to it, and the tag is cut at the last of them. The
 sections below are therefore headed by the series rather than by one version.
 
+## 0.2.0 (unreleased)
+
+The first beta, and the first release that is not a pre-release. It opens the
+maintenance line: fixes and upkeep, cut as alphas whenever enough of them
+accumulate, while a graphical interface is built alongside. Nothing in the
+recording path changes here.
+
+### Fixed
+
+- **The release badge was a picture of the word `none`.** It was a hardcoded
+  shields.io value sitting beside a claim, two lines below it, that both
+  version badges resolve from what GitHub records rather than from anything
+  kept in step by hand. That was true of the pre-release badge and false of
+  this one, and publishing a stable release is exactly the moment the
+  difference would have shown, to a reader who had already concluded there was
+  nothing to install. It is now the same query as its neighbour without
+  `include_prereleases`, and a test refuses a hardcoded value in its place.
+
 ## 0.1.6 (2026-08-06)
 
 The release about how long a call can be. Recording worked; recording for an

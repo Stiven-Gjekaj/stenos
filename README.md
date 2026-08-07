@@ -16,7 +16,7 @@ _One timestamped, speaker-attributed transcript. No audio leaves the machine_
   <a href="https://github.com/Stiven-Gjekaj/stenos/actions/workflows/ci.yml"><img src="https://github.com/Stiven-Gjekaj/stenos/actions/workflows/ci.yml/badge.svg" alt="CI"/></a>
   <a href="https://github.com/Stiven-Gjekaj/stenos/actions/workflows/compat.yml"><img src="https://github.com/Stiven-Gjekaj/stenos/actions/workflows/compat.yml/badge.svg" alt="Cross-platform behaviour"/></a>
   <a href="https://github.com/Stiven-Gjekaj/stenos/releases"><img src="https://img.shields.io/github/v/release/Stiven-Gjekaj/stenos?include_prereleases&style=flat-square&color=orange&label=pre-release" alt="The latest pre-release"/></a>
-  <img src="https://img.shields.io/badge/release-none-lightgrey?style=flat-square" alt="No stable release yet"/>
+  <a href="https://github.com/Stiven-Gjekaj/stenos/releases"><img src="https://img.shields.io/github/v/release/Stiven-Gjekaj/stenos?style=flat-square&color=blue&label=release" alt="The latest stable release"/></a>
   <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="MIT License"/>
 </p>
 
@@ -503,8 +503,7 @@ version badges above track:
 | `V` and `N` are both zero | Release | `Release v1.0.0` |
 
 An alpha is marked as a pre-release on GitHub, so the two badges resolve from
-what GitHub records rather than from anything kept in step by hand. Everything
-so far is an alpha, which is why the release badge reads `none`.
+what GitHub records rather than from anything kept in step by hand.
 
 ### Cutting one
 
