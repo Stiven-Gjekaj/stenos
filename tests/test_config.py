@@ -165,6 +165,17 @@ def test_a_zero_buffer_limit_is_accepted_as_no_limit() -> None:
     assert load_config(MINIMAL_ENV | {"MAX_BUFFER_MB": "0"}).max_buffer_mb == 0.0
 
 
+def test_the_disconnect_grace_has_a_default_and_is_read_from_the_environment() -> None:
+    assert load_config(MINIMAL_ENV).disconnect_grace == pytest.approx(60.0)
+    assert load_config(MINIMAL_ENV | {"DISCONNECT_GRACE": "15"}).disconnect_grace == pytest.approx(
+        15.0
+    )
+
+
+def test_a_zero_disconnect_grace_is_accepted_as_waiting_forever() -> None:
+    assert load_config(MINIMAL_ENV | {"DISCONNECT_GRACE": "0"}).disconnect_grace == 0.0
+
+
 def test_a_segment_length_of_zero_is_rejected() -> None:
     # It would close a segment on every packet, and each one would then be
     # discarded for being shorter than the minimum.

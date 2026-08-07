@@ -166,6 +166,10 @@ class RecordingSession:
     names: dict[int, str] = field(default_factory=dict)
     started_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     started_monotonic: float = field(default_factory=time.perf_counter)
+    #: When the voice connection was first seen down, or None while it is up.
+    #: A reconnect reads as disconnected until it succeeds, so what decides a
+    #: recording is how long this has been set rather than that it is.
+    disconnected_since: float | None = None
 
     def elapsed(self) -> float:
         """Seconds since recording began."""
@@ -215,9 +219,9 @@ def describe_result(result: RecordingResult, *, stopped: str = "Recording stoppe
     )
 
 
-#: How often a recording is measured against the buffer ceiling. Often
-#: enough that a runaway is caught within a few seconds of audio, rarely
-#: enough to be free.
+#: How often a recording is measured against the buffer ceiling and its
+#: connection checked. Often enough that a runaway is caught within a few
+#: seconds of audio, rarely enough to be free.
 BUFFER_CHECK_SECONDS = 15.0
 
 log = logging.getLogger("stenos")
@@ -234,15 +238,18 @@ class StenosBot(discord.Bot):  # type: ignore[misc]
         self.sessions: dict[int, RecordingSession] = {}
 
     @tasks.loop(seconds=BUFFER_CHECK_SECONDS)
-    async def _watch_buffers(self) -> None:
+    async def _watch_recordings(self) -> None:
+        # Connection first. A recording nothing is arriving on has no reason to
+        # be measured against a ceiling it can no longer approach.
+        await self.enforce_connection()
         await self.enforce_buffer_limit()
 
     async def on_ready(self) -> None:
         log.info("Connected as %s", self.user)
         # on_ready fires again after every reconnect, and starting a loop that
         # is already running raises.
-        if not self._watch_buffers.is_running():
-            self._watch_buffers.start()
+        if not self._watch_recordings.is_running():
+            self._watch_recordings.start()
 
     async def over_budget(self) -> list[RecordingSession]:
         """Sessions holding more audio than the configured ceiling allows.
@@ -264,6 +271,81 @@ class StenosBot(discord.Bot):  # type: ignore[misc]
         for session in over:
             self.sessions.pop(session.guild_id, None)
         return over
+
+    def connection_lost(self, session: RecordingSession) -> bool:
+        """Whether a session's voice client reports itself no longer connected.
+
+        Read through a guard rather than directly. A py-cord that renames or
+        removes ``is_connected`` would otherwise read as every recording having
+        dropped, and the next check would end all of them.
+        """
+        probe = getattr(session.voice_client, "is_connected", None)
+        if not callable(probe):
+            return False
+        try:
+            return not bool(probe())
+        except Exception:
+            return False
+
+    async def stranded(self) -> list[RecordingSession]:
+        """Sessions whose voice connection has been gone longer than the grace.
+
+        Losing the network takes the gateway with it, so the voice state update
+        that would have said so never arrives and the only account left is the
+        connection's own. py-cord reconnects and resumes on its own and reads
+        as disconnected for the whole of that attempt, which is why a recording
+        ends on how long the connection has been gone rather than on the first
+        check that finds it missing.
+
+        Removed from the register as they are found, for the same reason
+        ``over_budget`` removes them: two checks overlapping must not both end
+        the same recording.
+        """
+        grace = self.config.disconnect_grace
+        if grace <= 0:
+            return []
+
+        now = time.perf_counter()
+        lost = []
+        for session in list(self.sessions.values()):
+            if not self.connection_lost(session):
+                # Cleared rather than left. A connection that came back must
+                # not count the time it was away against the next outage.
+                session.disconnected_since = None
+                continue
+            if session.disconnected_since is None:
+                session.disconnected_since = now
+                log.warning(
+                    "Voice connection to %s is down, waiting %.0fs for it to come back.",
+                    session.channel_name,
+                    grace,
+                )
+            elif now - session.disconnected_since >= grace:
+                lost.append(session)
+
+        for session in lost:
+            self.sessions.pop(session.guild_id, None)
+        return lost
+
+    async def enforce_connection(self) -> None:
+        """End any recording whose connection did not come back, and say why."""
+        for session in await self.stranded():
+            log.warning(
+                "Voice connection to %s did not come back, stopping the recording.",
+                session.channel_name,
+            )
+            await self.finish_and_report(
+                session,
+                stopped=(
+                    f"Recording stopped after {format_duration(session.elapsed())}: "
+                    f"the voice connection to {session.channel_name} was lost and did "
+                    f"not come back within {self.config.disconnect_grace:g} seconds"
+                ),
+                closing=(
+                    "Everything captured before the connection dropped was transcribed. "
+                    "Raise DISCONNECT_GRACE to wait longer for a recovery."
+                ),
+            )
 
     async def finish_and_report(
         self,

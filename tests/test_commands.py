@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -39,6 +40,10 @@ class FakeVoiceClient:
         self.recording = False
         self.disconnected = False
         self.sink: Any = None
+        self.connected = True
+        # An instance attribute rather than a method, so a test can delete it
+        # and get a client on which the probe is genuinely missing.
+        self.is_connected = lambda: self.connected
         # Left unset rather than set to None when absent, so the attribute is
         # genuinely missing the way it would be on a py-cord that renamed it.
         if connection is not None:
@@ -495,6 +500,93 @@ async def test_a_disconnect_is_only_acted_on_once(
     await bot.on_voice_state_update(member, FakeVoiceState(channel), gone)
 
     assert len(session.text_channel.sent) == 1
+
+
+# The other half of losing a connection. A host that loses its network loses
+# the gateway with it, so no event arrives to say so and the connection's own
+# state is the only account left.
+
+
+async def test_a_connected_recording_is_left_alone(tmp_path: Path) -> None:
+    bot, channel, _session = await recording_with_self(tmp_path)
+    channel.voice_client.connected = True
+
+    await bot.enforce_connection()
+
+    assert 1 in bot.sessions
+
+
+async def test_a_dropped_connection_is_given_time_to_come_back(tmp_path: Path) -> None:
+    # A reconnect reads as disconnected for the whole of the attempt. Ending on
+    # the first check that finds it missing would cut every recovery short.
+    bot, channel, session = await recording_with_self(tmp_path)
+    channel.voice_client.connected = False
+
+    await bot.enforce_connection()
+
+    assert 1 in bot.sessions
+    assert session.disconnected_since is not None
+
+
+async def test_a_connection_that_comes_back_is_forgotten(tmp_path: Path) -> None:
+    # Otherwise the next outage inherits the first one's clock and ends the
+    # recording on its first check.
+    bot, channel, session = await recording_with_self(tmp_path)
+    channel.voice_client.connected = False
+    await bot.enforce_connection()
+
+    channel.voice_client.connected = True
+    await bot.enforce_connection()
+
+    assert session.disconnected_since is None
+
+
+async def test_a_connection_that_stays_down_ends_the_recording(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(bot_module, "load_backend", lambda *a, **k: MockBackend(texts=["a line"]))
+    bot, channel, session = await recording_with_self(tmp_path, disconnect_grace=0.01)
+    feed(session)
+    channel.voice_client.connected = False
+
+    await bot.enforce_connection()
+    # Past the grace, which is what the second check measures rather than the
+    # first. Compared against perf_counter, so it has to be real elapsed time.
+    time.sleep(0.02)
+    await bot.enforce_connection()
+
+    assert 1 not in bot.sessions
+    (message, _attachment) = session.text_channel.sent[0]
+    assert "was lost and did not come back" in message
+    assert "Transcribed" in message
+    assert "DISCONNECT_GRACE" in message
+
+
+async def test_a_zero_grace_waits_forever(tmp_path: Path) -> None:
+    # For a host where a recording surviving a long outage matters more than
+    # one that is quietly receiving nothing.
+    bot, channel, _session = await recording_with_self(tmp_path, disconnect_grace=0.0)
+    channel.voice_client.connected = False
+
+    await bot.enforce_connection()
+    await bot.enforce_connection()
+
+    assert 1 in bot.sessions
+
+
+async def test_a_voice_client_without_the_probe_is_treated_as_connected(
+    tmp_path: Path,
+) -> None:
+    # is_connected is py-cord's. A build that renames it would otherwise read
+    # as every recording having dropped, and end all of them on the next check.
+    bot, channel, _session = await recording_with_self(tmp_path, disconnect_grace=0.01)
+    del channel.voice_client.is_connected
+
+    await bot.enforce_connection()
+    time.sleep(0.02)
+    await bot.enforce_connection()
+
+    assert 1 in bot.sessions
 
 
 async def test_stop_reports_a_missing_backend_instead_of_hanging(

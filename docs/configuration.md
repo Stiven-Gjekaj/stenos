@@ -130,6 +130,23 @@ transcript survives.
 Raise it on a host with memory to spare. Set it to `0` only if you would rather
 lose a recording than have one stop on its own.
 
+### `DISCONNECT_GRACE`
+
+*Default: `60` seconds. `0` waits forever.*
+
+How long a recording waits for a lost voice connection to come back before it
+ends itself, transcribes what it captured, and says so in the text channel.
+
+Losing the network takes the gateway with it, so the event that would report a
+disconnect never arrives and the only account left is the voice connection's
+own state. py-cord reconnects and resumes on its own, and reads as disconnected
+for the whole of that attempt, so this cannot be short: its connect timeout
+alone is 30 seconds, and a recording ended during a recovery is a recording cut
+in half for no reason.
+
+Being disconnected, kicked, or moved is different. Those arrive as events and
+end the recording at once, without waiting.
+
 ---
 
 ## Output

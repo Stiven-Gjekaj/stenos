@@ -44,6 +44,12 @@ DEFAULT_MAX_SEGMENT = 30.0
 #: rate a reduced segment holds, this is about nine hours of speech. Zero
 #: removes the limit, for a host with memory to spare and a reason to use it.
 DEFAULT_MAX_BUFFER_MB = 1024.0
+
+#: How long a recording waits for a lost voice connection to come back before
+#: it ends itself, in seconds. py-cord reconnects and resumes on its own and
+#: reads as disconnected for the whole of that attempt, so this has to outlast
+#: a recovery: its connect timeout alone is 30 seconds. Zero waits forever.
+DEFAULT_DISCONNECT_GRACE = 60.0
 DEFAULT_OUTPUT_DIR = Path("transcripts")
 
 _TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
@@ -67,6 +73,7 @@ class Config:
     min_segment: float = DEFAULT_MIN_SEGMENT
     max_segment: float = DEFAULT_MAX_SEGMENT
     max_buffer_mb: float = DEFAULT_MAX_BUFFER_MB
+    disconnect_grace: float = DEFAULT_DISCONNECT_GRACE
     keep_audio: bool = False
     output_dir: Path = field(default=DEFAULT_OUTPUT_DIR)
 
@@ -266,6 +273,9 @@ def load_config(env: Mapping[str, str] | None = None, *, use_dotenv: bool = True
         min_segment=_read_float(env, "MIN_SEGMENT", DEFAULT_MIN_SEGMENT, minimum=0.0),
         max_segment=_read_float(env, "MAX_SEGMENT", DEFAULT_MAX_SEGMENT, minimum=0.1),
         max_buffer_mb=_read_float(env, "MAX_BUFFER_MB", DEFAULT_MAX_BUFFER_MB, minimum=0.0),
+        disconnect_grace=_read_float(
+            env, "DISCONNECT_GRACE", DEFAULT_DISCONNECT_GRACE, minimum=0.0
+        ),
         keep_audio=_read_bool(env, "KEEP_AUDIO", False),
         output_dir=DEFAULT_OUTPUT_DIR,
     )

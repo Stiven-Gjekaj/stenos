@@ -64,6 +64,24 @@ stopped receiving anything.
   A move ends it rather than following the bot, because what was captured
   belongs to the channel the transcript is named after.
 
+- **A host that lost its network kept the recording anyway.** That case sends
+  no event, because losing the network loses the gateway with it, so the voice
+  connection's own state is the only account left. It is now checked on the
+  same loop that measures the buffer, and a recording whose connection stays
+  down ends itself and transcribes what it captured.
+
+  It waits before doing so. py-cord reconnects and resumes on its own and reads
+  as disconnected for the whole of that attempt, so ending on the first check
+  that found the connection missing would cut every recovery short. The wait is
+  `DISCONNECT_GRACE`, defaulting to 60 seconds against py-cord's 30 second
+  connect timeout, and a connection that comes back clears the clock rather
+  than leaving it for the next outage to inherit.
+
+### Added
+
+- **`DISCONNECT_GRACE`**, for how long to wait, alongside the other limits in
+  `.env.example`. Zero waits forever.
+
 ## 0.1.6 (2026-08-06)
 
 The release about how long a call can be. Recording worked; recording for an
