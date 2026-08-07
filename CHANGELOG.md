@@ -88,6 +88,14 @@ stopped receiving anything.
   and a line each would bury everything else. The first and last always report:
   one says the work started, the other distinguishes finished from stalled.
 
+- **Every count in the README was stale, and nothing could tell.** The test
+  badge read 474 against 502 tests, and the source table understated two files
+  and all three of its totals. Each is a count of something that changes
+  whenever the code does, so each was correct only until the next commit, and
+  the release badge reading `none` for the project's whole life was the same
+  shape of fault. They are now checked against what they count, so one that
+  drifts fails in the commit that drifted it.
+
 ### Added
 
 - **`DISCONNECT_GRACE`**, for how long to wait, alongside the other limits in

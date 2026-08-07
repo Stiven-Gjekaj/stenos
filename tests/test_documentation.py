@@ -1,0 +1,104 @@
+"""Tests for the numbers the README states about this repository.
+
+Every one of them is a count of something that changes whenever the code does:
+how many tests there are, how long each source file is. Nothing recomputes
+them, so each is correct only until the next commit, and wrong quietly. The
+release badge had the same shape and read `none` for the project's whole life.
+
+These ask rather than remember. A count that drifts fails here, in the commit
+that drifted it, rather than being noticed by a reader months later.
+"""
+
+from __future__ import annotations
+
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+ROOT = Path(__file__).resolve().parent.parent
+SOURCE = ROOT / "src" / "stenos"
+
+# The wheel carries the package and a copy of the tests, but no README and no
+# sources to measure. platforms.yml runs the suite from exactly that, so there
+# is nothing here for it to check.
+if not (ROOT / "README.md").is_file() or not SOURCE.is_dir():
+    pytest.skip(
+        "not a repository checkout, so there is no README to check",
+        allow_module_level=True,
+    )
+
+
+def readme() -> str:
+    return (ROOT / "README.md").read_text(encoding="utf-8")
+
+
+def lines_in(path: Path) -> int:
+    """Lines in one file, counted the way the README's table counts them."""
+    return len(path.read_text(encoding="utf-8").splitlines())
+
+
+def collected_tests() -> int:
+    """How many tests this repository has, asked of pytest rather than counted.
+
+    Collection alone, so this does not run the suite from inside itself. A
+    plain run deselects the compat marker and prints both numbers, of which
+    the one after the slash is the total.
+    """
+    completed = subprocess.run(
+        [sys.executable, "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    found = re.search(r"(?:\d+/)?(\d+) tests? collected", completed.stdout)
+    assert found is not None, completed.stdout[-2000:] + completed.stderr[-2000:]
+    return int(found.group(1))
+
+
+def test_the_test_count_badge_is_current() -> None:
+    stated = re.search(r"badge/tests-(\d+)_passing", readme())
+
+    assert stated is not None, "the tests badge is no longer a count"
+    assert int(stated.group(1)) == collected_tests()
+
+
+#: One row of the source table: a module and the length claimed for it.
+TABLE_ROW = re.compile(r"^\|[^|]*\|\s*(\w+\.py)\s*\|\s*(\d+)\s*\|", re.MULTILINE)
+
+#: Its closing row, which counts every module rather than only the listed ones.
+TOTAL_ROW = re.compile(
+    r"^\|\s*\*\*Total\*\*\s*\|\s*\*\*(\d+) files\*\*\s*\|\s*\*\*(\d+)\*\*\s*"
+    r"\|\s*Plus (\d+) lines of tests",
+    re.MULTILINE,
+)
+
+
+def test_the_source_table_lists_files_that_exist() -> None:
+    rows = TABLE_ROW.findall(readme())
+
+    assert rows, "the source table has no rows, or no longer parses"
+    for name, _length in rows:
+        assert (SOURCE / name).is_file(), f"{name} is in the table and not on disk"
+
+
+@pytest.mark.parametrize(("name", "stated"), TABLE_ROW.findall(readme()))
+def test_each_stated_file_length_is_current(name: str, stated: str) -> None:
+    assert int(stated) == lines_in(SOURCE / name)
+
+
+def test_the_stated_totals_are_current() -> None:
+    # The totals count every module, including the two too short to be worth a
+    # row of their own, which is why they do not add up to the rows above.
+    total = TOTAL_ROW.search(readme())
+    assert total is not None, "the total row no longer parses"
+
+    files, source_lines, test_lines = (int(part) for part in total.groups())
+    modules = sorted(SOURCE.glob("*.py"))
+
+    assert files == len(modules)
+    assert source_lines == sum(lines_in(path) for path in modules)
+    assert test_lines == sum(lines_in(path) for path in sorted(Path(ROOT / "tests").rglob("*.py")))
