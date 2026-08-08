@@ -154,6 +154,13 @@ left behind by earlier changes.
   channel the recording was started from when the interaction will not take it,
   which is where a recording that ends itself has always reported.
 
+- **The architecture page described the design 0.1.4 replaced.** Its account of
+  the sink said the recording reads a clock on each packet and positions the
+  audio by arrival, which is the approach the module docstring calls the
+  obvious answer and the wrong one, and the reason the media clock exists. It
+  also predated the length cap on a segment and the worker that reduces one, so
+  the page explained neither. Rewritten to match what runs.
+
 ### Added
 
 - **The settings are checked against the two files that describe them.** The

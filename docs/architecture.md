@@ -19,11 +19,26 @@ Discord sends a separate stream per participant and decodes it to 48 kHz
 stereo signed 16 bit audio. Attribution is therefore free: the speaker is
 whichever stream the packet arrived on. Position in the call is not.
 
-`TimestampedSink` subclasses the py-cord sink and overrides `write`. On each
-packet it reads a clock, fixes the first reading as the recording origin, and
-appends to that user's open segment. When the interval since that user's
-previous packet exceeds `SEGMENT_GAP`, it closes the segment and opens a new
-one whose `start` is the offset from the origin.
+`TimestampedSink` subclasses the py-cord sink and overrides `write`. The
+question it answers is which timeline a packet belongs on, and arrival time is
+the obvious answer and the wrong one: py-cord drains a jitter buffer into the
+sink and synthesises packets to cover gaps, so a burst delivers several seconds
+of audio in a fraction of a second. Segments timed that way run longer than the
+span they arrived in and overlap the ones after them.
+
+Every packet carries its own answer. The RTP timestamp counts samples at the
+rate the audio decodes to, so it advances with the audio rather than with
+delivery and is unaffected by any buffering in front of the sink. It is used
+wherever it is present, measured from each participant's first packet, because
+the count starts somewhere unrelated between one participant and the next.
+Arrival still fixes where a participant's stream begins relative to the
+recording, since that is the only clock they all share, and settles a
+disagreement larger than `MAX_CLOCK_DISAGREEMENT`, which means the stream
+restarted rather than merely buffered.
+
+A segment closes when the media clock shows a gap longer than `SEGMENT_GAP`,
+and also at `MAX_SEGMENT`, without which one speaker who never pauses holds the
+whole call in a single segment.
 
 Two consequences worth stating:
 
@@ -32,8 +47,13 @@ Two consequences worth stating:
 - **Late joiners land correctly.** The sink bundled with py-cord concatenates
   each user's packets into one buffer, which discards when they spoke. A
   participant who joins ten minutes in then appears at the start of the merged
-  transcript. This sink records arrival time, so the merge is correct by
-  construction rather than by correction.
+  transcript. Placing each packet on the clock it carries makes the merge
+  correct by construction rather than by correction.
+
+A closed segment is handed to a worker thread that reduces it. Reducing thirty
+seconds of audio measures about seventy milliseconds and packets arrive every
+twenty, so doing it where the segment closes would stall py-cord's router
+thread every time somebody stopped speaking.
 
 The clock is a constructor argument. Tests drive segmentation with scripted
 timestamps and never sleep.
