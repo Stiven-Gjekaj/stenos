@@ -43,6 +43,7 @@ __all__ = [
     "resample",
     "segment_to_audio",
     "to_float32",
+    "to_int16",
 ]
 
 #: Discord decodes received voice to 48 kHz, stereo, signed 16 bit little endian.

@@ -34,6 +34,14 @@ left behind by earlier changes.
   `config` owns the settings and every caller inside the package passes its
   value, so what is left in `audio` is a private fallback named as one.
 
+- **Two modules imported names the module they came from did not export.**
+  `bot` takes `backend_status` from `transcribe` and `OPUS_PATH_VARIABLE` from
+  `sink`, and neither appeared in the `__all__` of its module. Nothing breaks
+  while an import names what it wants, so the lists quietly stopped being an
+  account of the surface between modules. Both are exported now, along with
+  `to_int16` and `resolve_speaker` which were omitted beside their siblings,
+  and a test refuses an import of anything a module does not declare.
+
 ## 0.2.1 (2026-08-07)
 
 The first of the maintenance alphas. About a recording noticing that it has

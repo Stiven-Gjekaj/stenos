@@ -11,6 +11,7 @@ that drifted it, rather than being noticed by a reader months later.
 
 from __future__ import annotations
 
+import ast
 import re
 import subprocess
 import sys
@@ -114,3 +115,41 @@ def test_the_stated_totals_are_current() -> None:
     assert files == len(modules)
     assert source_lines == sum(lines_in(path) for path in modules)
     assert test_lines == sum(lines_in(path) for path in sorted(Path(ROOT / "tests").rglob("*.py")))
+
+
+def module_exports() -> dict[str, set[str]]:
+    """What each module of the package declares in ``__all__``."""
+    exports: dict[str, set[str]] = {}
+    for path in sorted(SOURCE.glob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in tree.body:
+            if isinstance(node, ast.Assign) and any(
+                getattr(target, "id", "") == "__all__" for target in node.targets
+            ):
+                names = {element.value for element in node.value.elts}  # type: ignore[attr-defined]
+                exports[path.stem] = names
+    return exports
+
+
+def test_every_name_one_module_takes_from_another_is_exported() -> None:
+    # backend_status and OPUS_PATH_VARIABLE were both imported by bot.py and
+    # absent from the __all__ of the module they came from. Nothing breaks
+    # while the import is spelled out, so the lists drifted from what they
+    # describe and stopped being an account of the surface between modules.
+    exports = module_exports()
+    missing: list[str] = []
+
+    for path in sorted(SOURCE.glob("*.py")):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if not isinstance(node, ast.ImportFrom) or node.level != 1 or node.module is None:
+                continue
+            declared = exports.get(node.module)
+            if declared is None:
+                continue
+            missing += [
+                f"{path.name} takes {alias.name} from {node.module}, which does not export it"
+                for alias in node.names
+                if alias.name not in declared
+            ]
+
+    assert not missing, "\n".join(missing)

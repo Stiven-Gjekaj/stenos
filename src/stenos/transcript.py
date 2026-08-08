@@ -22,6 +22,7 @@ __all__ = [
     "format_timestamp",
     "merge",
     "render",
+    "resolve_speaker",
     "sanitize_filename",
     "transcript_paths",
     "transcript_stem",

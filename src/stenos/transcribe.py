@@ -29,6 +29,7 @@ __all__ = [
     "ProgressCallback",
     "TranscribedSegment",
     "TranscriptionBackend",
+    "backend_status",
     "invented_reason",
     "load_backend",
     "mlx_repo_for",

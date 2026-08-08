@@ -59,6 +59,7 @@ __all__ = [
     "DISCORD_SAMPLE_RATE",
     "DISCORD_SAMPLE_WIDTH",
     "MONO_BYTES_PER_SECOND",
+    "OPUS_PATH_VARIABLE",
     "Segment",
     "TimestampedSink",
     "bundle_directory",
