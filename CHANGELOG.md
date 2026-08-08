@@ -116,6 +116,14 @@ left behind by earlier changes.
   badge was not part of that change. It is checked against `pyproject.toml`
   now, like the other counts.
 
+- **Two test helpers were written out twice each.** `ScriptedClock`, which
+  drives segmentation without sleeping, and `segment_of`, which sizes a segment
+  in the mono bytes one actually holds, each existed identically in two
+  modules. Both live in `tests/helpers.py` now. The compatibility suite keeps
+  its own copy on purpose: it runs against an installed wheel from a directory
+  holding the tests alone, so sharing would make it depend on something that
+  environment does not carry.
+
 ## 0.2.1 (2026-08-07)
 
 The first of the maintenance alphas. About a recording noticing that it has

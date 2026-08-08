@@ -11,8 +11,8 @@ from types import ModuleType, SimpleNamespace
 import numpy as np
 import pytest
 
+from helpers import segment_of
 from stenos.audio import TARGET_SAMPLE_RATE
-from stenos.sink import MONO_BYTES_PER_SECOND, Segment
 from stenos.transcribe import (
     MLX_MODEL_REPOS,
     BackendUnavailableError,
@@ -26,12 +26,6 @@ from stenos.transcribe import (
     mlx_repo_for,
     transcribe_segments,
 )
-
-
-def segment_of(seconds: float, *, user_id: int = 1, start: float = 0.0) -> Segment:
-    return Segment(
-        user_id=user_id, start=start, pcm=bytearray(int(MONO_BYTES_PER_SECOND * seconds))
-    )
 
 
 def test_every_segment_is_transcribed_in_order() -> None:

@@ -9,6 +9,7 @@ import threading
 import numpy as np
 import pytest
 
+from helpers import segment_of
 from stenos import audio
 from stenos.audio import (
     _INT16_FULL_SCALE,
@@ -190,14 +191,6 @@ def test_numpy_path_matches_scipy_path_when_scipy_is_absent(
 
     assert resampled.shape == (math.ceil(tone.size / 3),)
     assert rms(resampled) == pytest.approx(rms(tone), rel=0.05)
-
-
-def segment_of(seconds: float, *, user_id: int = 1, start: float = 0.0) -> Segment:
-    # A segment holds mono from the moment it is written to, so a second of
-    # it is half what a second of the wire format costs.
-    return Segment(
-        user_id=user_id, start=start, pcm=bytearray(int(MONO_BYTES_PER_SECOND * seconds))
-    )
 
 
 def test_segments_shorter_than_the_threshold_are_discarded() -> None:

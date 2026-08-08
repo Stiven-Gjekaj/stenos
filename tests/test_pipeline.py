@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from helpers import ScriptedClock
 from stenos.bot import RecordingResult, discard_audio, run_pipeline
 from stenos.config import Config
 from stenos.sink import BYTES_PER_SECOND, TimestampedSink
@@ -20,17 +21,6 @@ RECORDED_AT = datetime(2026, 8, 1, 16, 14, 43, tzinfo=UTC)
 #: the length: transcription suppresses text over audio with nothing in it, so
 #: a fixture standing in for speech has to be loud enough to be speech.
 FRAME = b"\x00\x04" * (BYTES_PER_SECOND // 100)
-
-
-class ScriptedClock:
-    def __init__(self, times: Sequence[float]) -> None:
-        self._times = list(times)
-        self._index = 0
-
-    def __call__(self) -> float:
-        value = self._times[self._index]
-        self._index += 1
-        return value
 
 
 def build_sink(

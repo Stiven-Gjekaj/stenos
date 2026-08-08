@@ -403,7 +403,7 @@ becomes text, and text becomes one ordered transcript.
 | **Output** | transcript.py | 218 | Merges, orders, and writes the transcript and its sidecar portably |
 | **Commands** | bot.py | 853 | Slash commands, session state, the offline pipeline, and the CLI |
 | **Configuration** | config.py | 305 | Validated environment parsing and platform-aware backend resolution |
-| **Total** | **11 files** | **3657** | Plus 5681 lines of tests |
+| **Total** | **11 files** | **3657** | Plus 5689 lines of tests |
 
 ```
 src/stenos/      the bot (sink, transport, audio, transcription, output, commands)

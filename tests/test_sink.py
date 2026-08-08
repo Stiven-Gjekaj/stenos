@@ -7,6 +7,7 @@ from itertools import pairwise
 
 import pytest
 
+from helpers import ScriptedClock
 from stenos.audio import TARGET_SAMPLE_RATE
 from stenos.sink import (
     BYTES_PER_SECOND,
@@ -23,19 +24,6 @@ from stenos.sink import (
 FRAME_BYTES = BYTES_PER_SECOND // 50
 assert FRAME_BYTES == 3840
 FRAME = b"\x00" * FRAME_BYTES
-
-
-class ScriptedClock:
-    """Return a predetermined sequence of timestamps, one per call."""
-
-    def __init__(self, times: Sequence[float]) -> None:
-        self._times = list(times)
-        self._index = 0
-
-    def __call__(self) -> float:
-        value = self._times[self._index]
-        self._index += 1
-        return value
 
 
 def record(
