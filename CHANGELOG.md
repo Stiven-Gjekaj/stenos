@@ -124,6 +124,12 @@ left behind by earlier changes.
   holding the tests alone, so sharing would make it depend on something that
   environment does not carry.
 
+- **Two functions decomposed a duration the same way.** `format_timestamp` in
+  the transcript and `format_duration` in the bot each clamped at zero, divided
+  by 3600, then by 60, and differed only in what they printed. The arithmetic
+  is `split_hms` now and the two render its result, so the rule that hours are
+  not wrapped at 24 is stated once rather than relied on twice.
+
 ## 0.2.1 (2026-08-07)
 
 The first of the maintenance alphas. About a recording noticing that it has

@@ -24,6 +24,7 @@ __all__ = [
     "render",
     "resolve_speaker",
     "sanitize_filename",
+    "split_hms",
     "transcript_paths",
     "transcript_stem",
     "write_sidecar",
@@ -49,14 +50,22 @@ _SEPARATOR_RUN = re.compile(r"-{2,}")
 _WHITESPACE_RUN = re.compile(r"\s+")
 
 
-def format_timestamp(seconds: float) -> str:
-    """Render an offset in seconds as a bracketed clock time.
+def split_hms(seconds: float) -> tuple[int, int, int]:
+    """Whole hours, minutes, and seconds of an offset, never negative.
 
-    Hours are not wrapped at 24, so a long recording keeps increasing.
+    Hours are not wrapped at 24, so a long recording keeps increasing rather
+    than starting again. Shared with the duration the bot reports, which
+    decomposed the same value the same way and rendered it differently.
     """
     total = max(0, int(seconds))
     hours, remainder = divmod(total, 3600)
     minutes, secs = divmod(remainder, 60)
+    return hours, minutes, secs
+
+
+def format_timestamp(seconds: float) -> str:
+    """Render an offset in seconds as a bracketed clock time."""
+    hours, minutes, secs = split_hms(seconds)
     return f"[{hours:02d}:{minutes:02d}:{secs:02d}]"
 
 

@@ -34,6 +34,7 @@ from .transcript import (
     TranscriptLine,
     build_sidecar,
     merge,
+    split_hms,
     transcript_paths,
     write_sidecar,
     write_transcript,
@@ -191,10 +192,8 @@ class RecordingSession:
 
 
 def format_duration(seconds: float) -> str:
-    """Render a duration as hours, minutes, and seconds."""
-    total = max(0, int(seconds))
-    hours, remainder = divmod(total, 3600)
-    minutes, secs = divmod(remainder, 60)
+    """Render a duration as hours, minutes, and seconds, dropping empty units."""
+    hours, minutes, secs = split_hms(seconds)
     if hours:
         return f"{hours}h {minutes}m {secs}s"
     if minutes:
