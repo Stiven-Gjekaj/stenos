@@ -114,7 +114,8 @@ left behind by earlier changes.
 - **The dependency badge counted three against four declared.** `certifi` was
   added when a frozen build turned out to carry no certificate store, and the
   badge was not part of that change. It is checked against `pyproject.toml`
-  now, like the other counts.
+  now, like the other counts. The contributing guide said three as well, in
+  the sentence asking contributors not to add more, and is checked too.
 
 - **Two test helpers were written out twice each.** `ScriptedClock`, which
   drives segmentation without sleeping, and `segment_of`, which sizes a segment

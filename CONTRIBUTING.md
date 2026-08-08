@@ -67,7 +67,7 @@ existing tests in `tests/test_sink.py` show the pattern.
   clear names over cleverness.
 - Type hints throughout. `mypy` runs over `src/` with untyped definitions
   disallowed.
-- Add dependencies sparingly. Stenos has three direct runtime dependencies, and
+- Add dependencies sparingly. Stenos has four direct runtime dependencies, and
   both transcription backends are optional extras. A pull request that adds one
   should justify the need and prefer the standard library where practical.
 - Write documentation and comments in plain prose. Do not use em-dashes or

@@ -156,13 +156,30 @@ def test_every_name_one_module_takes_from_another_is_exported() -> None:
     assert not missing, "\n".join(missing)
 
 
+#: How many the project actually declares.
+_WORDS = {1: "one", 2: "two", 3: "three", 4: "four", 5: "five", 6: "six"}
+
+
+def declared_dependencies() -> int:
+    declared = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    return len(declared["project"]["dependencies"])
+
+
 def test_the_dependency_badge_counts_the_dependencies() -> None:
     # It read three while pyproject declared four. certifi was added when a
     # frozen build turned out to carry no certificate store, and the badge was
     # not part of that change, so it undercounted from then on.
-    declared = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-    count = len(declared["project"]["dependencies"])
     stated = re.search(r"badge/dependencies-(\d+)_direct", readme())
 
     assert stated is not None, "the dependencies badge is no longer a count"
-    assert int(stated.group(1)) == count
+    assert int(stated.group(1)) == declared_dependencies()
+
+
+def test_the_contributing_guide_counts_the_dependencies() -> None:
+    # Written out in words there, and stale for the same reason and since the
+    # same commit. It is the sentence asking contributors not to add more.
+    guide = (ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8")
+    stated = re.search(r"Stenos has (\w+) direct runtime dependencies", guide)
+
+    assert stated is not None, "the guide no longer states a count"
+    assert stated.group(1) == _WORDS[declared_dependencies()]
