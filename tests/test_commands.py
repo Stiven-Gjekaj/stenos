@@ -1005,3 +1005,25 @@ async def test_a_stop_whose_interaction_expired_posts_to_the_channel(
 
     assert session.text_channel.sent, "the result was lost when the token expired"
     assert "Transcribed" in session.text_channel.sent[0][0]
+
+
+async def test_a_recording_that_cannot_be_announced_does_not_start(tmp_path: Path) -> None:
+    # The session used to be registered before the announcement, so a failure
+    # there escaped with a recording running that nobody had been told about.
+    # Recording law varies by jurisdiction and there is no silent mode.
+    bot = make_bot(tmp_path)
+    channel = FakeVoiceChannel(2, "general", [])
+    author = FakeMember(11, "Alpha", channel=channel)
+    channel.members = [author]
+    ctx = FakeContext(1, author)
+
+    async def refuse(content: str, file: Any = None) -> None:
+        raise RuntimeError("403 Forbidden: Missing Permissions")
+
+    ctx.followup.send = refuse  # type: ignore[method-assign]
+
+    await command(bot, "start")(ctx)
+
+    assert bot.sessions == {}, "a recording nobody was told about was left running"
+    assert channel.voice_client.recording is False
+    assert channel.voice_client.disconnected is True

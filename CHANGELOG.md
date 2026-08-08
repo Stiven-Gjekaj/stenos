@@ -161,6 +161,13 @@ left behind by earlier changes.
   also predated the length cap on a segment and the worker that reduces one, so
   the page explained neither. Rewritten to match what runs.
 
+- **A recording that could not be announced started anyway.** The session was
+  registered before the announcement was sent, so a failure there escaped the
+  handler with a recording running in a channel nobody had been told about. The
+  README's consent section says there is no silent recording mode, and this was
+  one. The announcement now decides: if it will not send, the recording is
+  stopped and the bot leaves.
+
 ### Added
 
 - **The settings are checked against the two files that describe them.** The

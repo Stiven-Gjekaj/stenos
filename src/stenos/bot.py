@@ -659,14 +659,29 @@ def register_commands(bot: StenosBot, guild_ids: list[int] | None = None) -> Any
             )
             return
 
-        bot.sessions[session.guild_id] = session
-
         # Announced unconditionally and non-ephemerally. Recording law varies
-        # by jurisdiction and silent recording is never the intent.
-        await ctx.followup.send(
+        # by jurisdiction and silent recording is never the intent, so a
+        # recording that cannot say it has started does not start: the session
+        # was registered before this and the failure escaped, which left one
+        # running that nobody had been told about.
+        announced = await _reply(
+            ctx.followup,
             f"Recording {channel.name}. Every participant is recorded separately "
-            f"and transcribed locally when the recording stops."
+            f"and transcribed locally when the recording stops.",
+            None,
         )
+        if not announced:
+            log.warning(
+                "Could not announce the recording in %s, so it was not started.", channel.name
+            )
+            with contextlib.suppress(Exception):
+                voice_client.stop_recording()
+            sink.cleanup()
+            with contextlib.suppress(Exception):
+                await voice_client.disconnect()
+            return
+
+        bot.sessions[session.guild_id] = session
 
     @group.command(name="stop", description="Stop recording and post the transcript")
     async def record_stop(ctx: discord.ApplicationContext) -> None:
