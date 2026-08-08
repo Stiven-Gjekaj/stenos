@@ -53,22 +53,6 @@ left behind by earlier changes.
   `Segment.snapshot` returns the two together, and `buffered_bytes` measures
   each segment under its own lock rather than reaching into it.
 
-### Changed
-
-- **One way of sending a result, and one of declaring an untyped import.** Both
-  commands and both automatic stops each wrote out the same send, including the
-  same comment about why the attachment keyword is omitted rather than passed
-  as None; a failure in an error path could then raise over the error it was
-  reporting. The two backend loaders each assigned to a local for the sake of
-  its annotation, which is what `cast` says.
-
-- **Eleven more lint rule sets, added because the code already passed them.**
-  `RET`, `PIE`, `FURB`, `PERF`, `PTH`, `A`, `ISC`, `LOG`, `SLOT`, `T20`, and
-  `TID`. Each is a rule against drifting back rather than a cleanup left to do:
-  between them they cover the unnecessary returns, the collapsible branches,
-  and the redundant assignments this release removed by hand. Turning them on
-  found four more, including a test argument shadowing `id`.
-
 - **`TimestampedSink.duration` no longer guards a case it cannot reach.** It
   fell back to zero when no segment existed, discarding the arrival span it had
   just computed, though every packet opens a segment and so the list is empty
@@ -188,6 +172,22 @@ left behind by earlier changes.
   that 0.1.5 added was never written into it, so the module explained three of
   the four things it does. The README undercounted for the same reason, at four
   where its own wording makes five.
+
+### Changed
+
+- **One way of sending a result, and one of declaring an untyped import.** Both
+  commands and both automatic stops each wrote out the same send, including the
+  same comment about why the attachment keyword is omitted rather than passed
+  as None; a failure in an error path could then raise over the error it was
+  reporting. The two backend loaders each assigned to a local for the sake of
+  its annotation, which is what `cast` says.
+
+- **Eleven more lint rule sets, added because the code already passed them.**
+  `RET`, `PIE`, `FURB`, `PERF`, `PTH`, `A`, `ISC`, `LOG`, `SLOT`, `T20`, and
+  `TID`. Each is a rule against drifting back rather than a cleanup left to do:
+  between them they cover the unnecessary returns, the collapsible branches,
+  and the redundant assignments this release removed by hand. Turning them on
+  found four more, including a test argument shadowing `id`.
 
 ### Added
 
