@@ -47,6 +47,20 @@ recording path changes here.
   0.1.6 changed to every workflow that ran, for the reason that change records.
   And the test count badge read 453 against 474 tests.
 
+## 0.2.2 (unreleased)
+
+A pass over the whole codebase for defects, duplication, and things that were
+left behind by earlier changes.
+
+### Fixed
+
+- **The package shipped a conversion nothing called.** `pcm_to_mono` did in one
+  step what the reduction work replaced with two, dropping a channel as packets
+  arrive and normalising only when a model reads. It was still exported and
+  still tested, so eight tests were checking code that could not run. Those now
+  exercise the pair that does run, and the one step version stays in the test
+  file as an independent reference for it to be checked against.
+
 ## 0.2.1 (2026-08-07)
 
 The first of the maintenance alphas. About a recording noticing that it has

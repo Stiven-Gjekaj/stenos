@@ -397,13 +397,13 @@ becomes text, and text becomes one ordered transcript.
 | **Receiving** | sink.py | 460 | Places packets on the media clock they carry and splits segments on silence; loads libopus |
 | **Transport** | voice.py | 205 | Reads the end-to-end encryption state a voice connection negotiated |
 | **Transport** | upstream.py | 826 | Repairs the py-cord 2.8.1 defects that lose received audio or end a recording, when they are present |
-| **Conversion** | audio.py | 297 | Downmixes and resamples to 16 kHz mono, discarding fragments too short to carry speech |
+| **Conversion** | audio.py | 287 | Downmixes and resamples to 16 kHz mono, discarding fragments too short to carry speech |
 | **Verification** | integrity.py | 113 | Separates a recording that captured nothing from a call in which nobody spoke |
 | **Transcription** | transcribe.py | 337 | Backend protocol, mlx and faster-whisper implementations, and the segment loop |
 | **Output** | transcript.py | 214 | Merges, orders, and writes the transcript and its sidecar portably |
 | **Commands** | bot.py | 845 | Slash commands, session state, the offline pipeline, and the CLI |
 | **Configuration** | config.py | 281 | Validated environment parsing and platform-aware backend resolution |
-| **Total** | **11 files** | **3604** | Plus 5517 lines of tests |
+| **Total** | **11 files** | **3594** | Plus 5541 lines of tests |
 
 ```
 src/stenos/      the bot (sink, transport, audio, transcription, output, commands)

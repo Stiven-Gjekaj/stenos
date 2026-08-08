@@ -39,7 +39,6 @@ __all__ = [
     "downmix",
     "downsample",
     "loudness",
-    "pcm_to_mono",
     "prepare_segments",
     "resample",
     "segment_to_audio",
@@ -94,15 +93,6 @@ def _stereo_frames(pcm: bytes | bytearray) -> npt.NDArray[np.int16]:
     if frames == 0:
         return np.zeros((0, DISCORD_CHANNELS), dtype=np.int16)
     return raw[: frames * DISCORD_CHANNELS].reshape(-1, DISCORD_CHANNELS)
-
-
-def pcm_to_mono(pcm: bytes | bytearray) -> npt.NDArray[np.float32]:
-    """Downmix interleaved 16 bit stereo bytes to normalised float32 mono."""
-    stereo = _stereo_frames(pcm)
-    if stereo.size == 0:
-        return np.zeros(0, dtype=np.float32)
-    mono = stereo.mean(axis=1, dtype=np.float32)
-    return np.asarray(mono / _INT16_FULL_SCALE, dtype=np.float32)
 
 
 def downmix(pcm: bytes | bytearray) -> bytes:

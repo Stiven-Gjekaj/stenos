@@ -13,10 +13,10 @@ from stenos.audio import (
     _INT16_FULL_SCALE,
     TARGET_SAMPLE_RATE,
     downmix,
-    pcm_to_mono,
     prepare_segments,
     resample,
     segment_to_audio,
+    to_float32,
     to_int16,
 )
 from stenos.sink import (
@@ -45,10 +45,34 @@ def rms(samples: np.ndarray) -> float:
     return float(np.sqrt(np.mean(np.square(samples.astype(np.float64)))))
 
 
+def converted(pcm: bytes) -> np.ndarray:
+    """Stereo bytes as the package converts them, in the two steps it uses.
+
+    A channel is dropped as each packet arrives and the result is normalised
+    only when a model reads it, so this pair is what actually runs.
+    """
+    return to_float32(downmix(pcm))
+
+
+def mono_reference(pcm: bytes) -> np.ndarray:
+    """The same conversion in one step, computed independently.
+
+    The package used to do it this way. Kept here rather than shipped, so the
+    two step path has something to be checked against that is not itself.
+    """
+    raw = np.frombuffer(pcm, dtype="<i2")
+    frames = raw.size // DISCORD_CHANNELS
+    if frames == 0:
+        return np.zeros(0, dtype=np.float32)
+    stereo = raw[: frames * DISCORD_CHANNELS].reshape(-1, DISCORD_CHANNELS)
+    averaged = stereo.mean(axis=1, dtype=np.float32) / _INT16_FULL_SCALE
+    return np.asarray(averaged, dtype=np.float32)
+
+
 def test_channels_are_averaged() -> None:
     pcm = stereo_pcm([1000, 2000], [3000, 4000])
 
-    mono = pcm_to_mono(pcm)
+    mono = converted(pcm)
 
     assert mono.shape == (2,)
     assert mono[0] == pytest.approx(2000 / 32768.0, abs=1e-6)
@@ -58,7 +82,7 @@ def test_channels_are_averaged() -> None:
 def test_output_is_float32_normalised_to_unit_range() -> None:
     pcm = stereo_pcm([32767, -32768], [32767, -32768])
 
-    mono = pcm_to_mono(pcm)
+    mono = converted(pcm)
 
     assert mono.dtype == np.float32
     assert mono.max() <= 1.0
@@ -70,22 +94,22 @@ def test_trailing_partial_frame_is_discarded() -> None:
     # Five int16 samples cannot form whole stereo frames; the last is dropped.
     pcm = struct.pack("<5h", 1, 2, 3, 4, 5)
 
-    assert pcm_to_mono(pcm).shape == (2,)
+    assert converted(pcm).shape == (2,)
 
 
 def test_empty_input_yields_an_empty_array() -> None:
-    mono = pcm_to_mono(b"")
+    mono = converted(b"")
 
     assert mono.shape == (0,)
     assert mono.dtype == np.float32
 
 
 def test_single_orphan_sample_yields_an_empty_array() -> None:
-    assert pcm_to_mono(struct.pack("<h", 7)).shape == (0,)
+    assert converted(struct.pack("<h", 7)).shape == (0,)
 
 
 def test_one_second_of_stereo_becomes_one_second_of_mono() -> None:
-    mono = pcm_to_mono(bytes(BYTES_PER_SECOND))
+    mono = converted(bytes(BYTES_PER_SECOND))
 
     assert mono.shape == (DISCORD_SAMPLE_RATE,)
 
@@ -226,7 +250,7 @@ def test_reducing_a_segment_keeps_the_audio_it_held() -> None:
     # The property the whole change rests on. Reducing early has to give the
     # backend what converting late gave it, or the transcript changes.
     stereo = speech_like(3.0)
-    expected = resample(pcm_to_mono(stereo))
+    expected = resample(mono_reference(stereo))
 
     segment = Segment(user_id=1, start=0.0)
     for offset in range(0, len(stereo), 3840):
