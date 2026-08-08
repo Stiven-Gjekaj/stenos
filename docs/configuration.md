@@ -157,6 +157,17 @@ nothing else ends one.
 
 ## Output
 
+### `OUTPUT_DIR`
+
+*Default: `transcripts`.*
+
+Where the `.txt` transcript and its `.json` sidecar are written. Created if it
+does not exist.
+
+A relative path is relative to the working directory the bot was started from,
+which is the natural place for a run started by hand and rarely what a service
+wants; give one an absolute path. A leading `~` is expanded.
+
 ### `KEEP_AUDIO`
 
 *Default: `false`.*

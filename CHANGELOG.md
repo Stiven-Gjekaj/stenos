@@ -86,6 +86,13 @@ left behind by earlier changes.
   reported now, with a ceiling of zero rendered as `none` rather than as `0`,
   which reads like a limit of nothing rather than no limit.
 
+- **The output directory could not be set.** `Config` carried the field, the
+  pipeline was plumbed for it end to end, `--check` reported it, and nothing
+  ever read it from anywhere: `load_config` passed the default in by hand. The
+  only way to write transcripts somewhere else was to edit the source. It is
+  now `OUTPUT_DIR`, documented with the rest, with a leading `~` expanded so it
+  cannot create a directory of that name.
+
 ## 0.2.1 (2026-08-07)
 
 The first of the maintenance alphas. About a recording noticing that it has

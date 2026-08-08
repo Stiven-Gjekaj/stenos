@@ -181,3 +181,20 @@ def test_a_segment_length_of_zero_is_rejected() -> None:
     # discarded for being shorter than the minimum.
     with pytest.raises(ConfigError, match="MAX_SEGMENT"):
         load_config(MINIMAL_ENV | {"MAX_SEGMENT": "0"})
+
+
+def test_the_output_directory_defaults_and_is_read_from_the_environment() -> None:
+    # The field existed and was plumbed through the whole pipeline, and nothing
+    # ever read it from anywhere, so the only way to move transcripts off the
+    # default was to edit the source.
+    assert load_config(MINIMAL_ENV).output_dir == Path("transcripts")
+    assert load_config(MINIMAL_ENV | {"OUTPUT_DIR": "calls"}).output_dir == Path("calls")
+
+
+def test_a_leading_tilde_in_the_output_directory_is_expanded() -> None:
+    # Otherwise a literal directory named "~" appears in the working directory,
+    # which is never what anybody meant.
+    expanded = load_config(MINIMAL_ENV | {"OUTPUT_DIR": "~/calls"}).output_dir
+
+    assert not str(expanded).startswith("~")
+    assert expanded == Path.home() / "calls"

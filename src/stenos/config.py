@@ -233,6 +233,19 @@ def _read_float(env: Mapping[str, str], key: str, default: float, *, minimum: fl
     return value
 
 
+def _read_output_dir(env: Mapping[str, str]) -> Path:
+    """Where transcripts are written.
+
+    Expanded so a leading ~ means what it looks like, and left relative when it
+    is relative, since the working directory is the natural place for a run
+    started by hand.
+    """
+    raw = _lookup(env, "OUTPUT_DIR")
+    if raw is None:
+        return DEFAULT_OUTPUT_DIR
+    return Path(raw).expanduser()
+
+
 def _read_guild_id(env: Mapping[str, str]) -> int | None:
     raw = _lookup(env, "GUILD_ID")
     if raw is None:
@@ -288,5 +301,5 @@ def load_config(env: Mapping[str, str] | None = None, *, use_dotenv: bool = True
             env, "DISCONNECT_GRACE", DEFAULT_DISCONNECT_GRACE, minimum=0.0
         ),
         keep_audio=_read_bool(env, "KEEP_AUDIO", False),
-        output_dir=DEFAULT_OUTPUT_DIR,
+        output_dir=_read_output_dir(env),
     )
