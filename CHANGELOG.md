@@ -136,6 +136,16 @@ left behind by earlier changes.
   One branch covers both, and the status still says which happened, since only
   one of them means the read itself failed.
 
+### Added
+
+- **The settings are checked against the two files that describe them.** The
+  code that reads a setting, the `.env.example` people copy, and the
+  configuration reference are three accounts of one list, none derived from the
+  others, so a setting can exist in any one of them alone. `OUTPUT_DIR` did:
+  the field was plumbed the whole way through and named nowhere. Tests now
+  refuse a setting read but not documented, one offered but read by nothing,
+  and an example whose stated default differs from the code's.
+
 ## 0.2.1 (2026-08-07)
 
 The first of the maintenance alphas. About a recording noticing that it has
