@@ -166,7 +166,8 @@ left behind by earlier changes.
   handler with a recording running in a channel nobody had been told about. The
   README's consent section says there is no silent recording mode, and this was
   one. The announcement now decides: if it will not send, the recording is
-  stopped and the bot leaves.
+  stopped and the bot leaves. The consent section and the architecture page
+  both say so, since it is now a guarantee rather than an intention.
 
 ### Added
 

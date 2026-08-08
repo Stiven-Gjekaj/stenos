@@ -163,7 +163,9 @@ for minutes would stop the gateway heartbeat and drop the connection.
 
 `/record start` and `/record stop` post visible, non-ephemeral messages. That is
 deliberate and is covered in the consent section of the README: there is no
-silent recording mode.
+silent recording mode. The start message gates the recording rather than
+accompanying it, so a channel the bot cannot post to is a channel it does not
+record.
 
 A recording that received no packets is reported as such rather than presented
 as an empty transcript, and a failed transcription is reported rather than left

@@ -295,6 +295,11 @@ visible, non-ephemeral messages to the text channel, and Discord itself shows
 the bot as connected to the voice channel. There is no silent recording mode and
 none will be added.
 
+The announcement is what starts the recording, not a message sent alongside it.
+If the start message cannot be posted, the bot leaves the channel rather than
+recording without one. A recording that ends by itself reports to the same
+channel for the same reason.
+
 ---
 
 ## Performance
