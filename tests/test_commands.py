@@ -895,3 +895,60 @@ async def test_stopping_by_hand_and_by_the_limit_produce_the_same_report(
         )
         == requested[requested.index(tail) :]
     )
+
+
+# The loop that drives both automatic stops. Nothing exercised it, so the two
+# checks were tested and the only thing that calls them in production was not.
+
+
+async def test_the_watchdog_runs_both_checks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bot, _channel, _session = await recording_with_self(tmp_path)
+    ran: list[str] = []
+
+    async def note(name: str) -> None:
+        ran.append(name)
+
+    monkeypatch.setattr(bot, "enforce_connection", lambda: note("connection"))
+    monkeypatch.setattr(bot, "enforce_buffer_limit", lambda: note("buffer"))
+
+    await bot._watch_recordings()
+
+    # Connection first: a recording nothing arrives on has no reason to be
+    # measured against a ceiling it can no longer approach.
+    assert ran == ["connection", "buffer"]
+
+
+async def test_becoming_ready_starts_the_watchdog_once(tmp_path: Path) -> None:
+    # on_ready fires again after every gateway reconnect, and starting a loop
+    # that is already running raises, which would leave the bot connected with
+    # nothing watching the recordings it holds.
+    bot, _channel, _session = await recording_with_self(tmp_path)
+    try:
+        await bot.on_ready()
+        assert bot._watch_recordings.is_running()
+
+        await bot.on_ready()
+
+        assert bot._watch_recordings.is_running()
+    finally:
+        bot._watch_recordings.cancel()
+
+
+async def test_a_probe_that_raises_reads_as_still_connected(tmp_path: Path) -> None:
+    # Same reasoning as a probe that is missing. A py-cord whose is_connected
+    # raises must not be read as every recording having dropped.
+    bot, channel, session = await recording_with_self(tmp_path, disconnect_grace=0.01)
+
+    def refuse() -> bool:
+        raise RuntimeError("moved in this version")
+
+    channel.voice_client.is_connected = refuse
+
+    await bot.enforce_connection()
+    time.sleep(0.02)
+    await bot.enforce_connection()
+
+    assert 1 in bot.sessions
+    assert session.disconnected_since is None

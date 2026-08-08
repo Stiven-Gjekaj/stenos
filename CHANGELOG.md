@@ -146,6 +146,14 @@ left behind by earlier changes.
   refuse a setting read but not documented, one offered but read by nothing,
   and an example whose stated default differs from the code's.
 
+- **Tests for the loop that drives both automatic stops.** `enforce_connection`
+  and `enforce_buffer_limit` were each covered and the only thing that calls
+  them in a running bot was not, along with `on_ready`, which starts that loop
+  and fires again after every gateway reconnect: starting a running loop
+  raises, which would leave the bot connected with nothing watching. Also the
+  case where a py-cord's `is_connected` raises rather than being absent, which
+  must read as connected for the same reason.
+
 ## 0.2.1 (2026-08-07)
 
 The first of the maintenance alphas. About a recording noticing that it has
