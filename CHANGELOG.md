@@ -98,6 +98,12 @@ left behind by earlier changes.
   and troubleshooting page both named `transcripts/` as where files go rather
   than as the default.
 
+- **The troubleshooting page showed a `--check` output from 0.1.2.** It ended
+  at `opus loaded`, so the eight lines added since, covering the encryption
+  state, the receive path, and which py-cord repairs were applied, appeared in
+  a real run and in no example of one. Those lines are the ones somebody
+  reading that page is being asked to look at.
+
 ## 0.2.1 (2026-08-07)
 
 The first of the maintenance alphas. About a recording noticing that it has

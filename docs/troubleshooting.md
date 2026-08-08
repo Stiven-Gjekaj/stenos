@@ -11,7 +11,7 @@ whether libopus loaded, without connecting to Discord. Most problems below are
 visible in its output.
 
 ```
-stenos 0.1.2.0 (frozen executable)
+stenos 0.2.2.0 (frozen executable)
 python           3.12.8 on Darwin arm64
 backend          auto resolves to mlx
 backend usable   True (installed)
@@ -19,10 +19,23 @@ model            small
 language         auto
 segment gap      0.4s
 minimum segment  0.3s
+maximum segment  30.0s
+buffer limit     1024MB
+disconnect grace 60s
 output directory transcripts
 keep audio       False
 opus loaded      True
+encryption       davey 0.1.6, protocol 1
+receive          py-cord 2.8.1, sink contract adapted to its rewritten receive path
+receive repair   applied (py-cord discarded unencrypted audio and mishandled the packet extension)
+decode repair    applied
+handoff repair   applied
+certificates     system default
 ```
+
+The last five lines report the state of the voice transport and which of the
+py-cord repairs this installation needed. `not needed` means the installed
+py-cord does not have that defect, not that the repair failed.
 
 ---
 
