@@ -198,9 +198,9 @@ reports whether opus loaded.
 
 ## Where transcripts go
 
-The output directory is `transcripts/` next to the working directory and is not
-configurable through the environment. Files are named
-`stenos-<channel>-<timestamp>.txt` with a `.json` sidecar beside each one.
+`OUTPUT_DIR` decides, defaulting to `transcripts/` beside the working
+directory. Files are named `stenos-<channel>-<timestamp>.txt` with a `.json`
+sidecar beside each one.
 
 The channel name is sanitised on every platform, so a channel called
 `voice: general <main>` produces `stenos-voice-general-main-20260801T161443Z.txt`

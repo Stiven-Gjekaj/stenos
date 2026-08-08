@@ -93,6 +93,11 @@ left behind by earlier changes.
   now `OUTPUT_DIR`, documented with the rest, with a leading `~` expanded so it
   cannot create a directory of that name.
 
+- **Three places said the output directory was fixed.** The configuration page
+  stated outright that it was not settable from the environment, and the README
+  and troubleshooting page both named `transcripts/` as where files go rather
+  than as the default.
+
 ## 0.2.1 (2026-08-07)
 
 The first of the maintenance alphas. About a recording noticing that it has

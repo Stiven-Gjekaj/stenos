@@ -194,9 +194,9 @@ under [known limitations](#known-limitations) were found and repaired.
 | `/record status` | Reports elapsed time, how many participants have spoken, and the encryption state while no audio has arrived |
 | `/record stop` | Stops, transcribes, and posts the transcript with a segment and speaker count |
 
-Transcripts are written to `transcripts/stenos-<channel>-<timestamp>.txt`, and
-attached to the completion message when they fit inside the server's upload
-limit.
+Transcripts are written to `stenos-<channel>-<timestamp>.txt` under
+`OUTPUT_DIR`, which defaults to `transcripts/`, and attached to the completion
+message when they fit inside the server's upload limit.
 
 ### Creating the bot
 

@@ -175,7 +175,7 @@ and adding it later requires re-inviting.
 It is attached only when it fits inside the server's upload limit, which is 10
 MiB for an unboosted guild. A long call can exceed it.
 
-The file is always written to `transcripts/` regardless, so nothing is lost.
+The file is written to `OUTPUT_DIR` regardless, so nothing is lost.
 
 ---
 
