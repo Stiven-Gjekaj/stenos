@@ -79,6 +79,13 @@ left behind by earlier changes.
   name the other allowed. One helper does it, and still names the setting when
   the name came from one.
 
+- **The environment report left out three settings that end a recording.**
+  `--check` is what an operator runs before an unattended call, and it listed
+  the segment gap and the minimum segment while saying nothing about the
+  maximum segment, the buffer ceiling, or the disconnect grace. All three are
+  reported now, with a ceiling of zero rendered as `none` rather than as `0`,
+  which reads like a limit of nothing rather than no limit.
+
 ## 0.2.1 (2026-08-07)
 
 The first of the maintenance alphas. About a recording noticing that it has

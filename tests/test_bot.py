@@ -217,3 +217,28 @@ def test_check_reports_the_environment_without_connecting(
 
     assert main(["--check"]) == 0
     assert "backend" in capsys.readouterr().out
+
+
+def test_the_environment_report_names_every_limit_that_ends_a_recording() -> None:
+    # --check is what someone runs before an unattended call. Three of the
+    # settings that decide when a recording stops itself were missing from it,
+    # so the report described a configuration it was not fully reporting.
+    report = describe_environment(Config(discord_token="x", output_dir=Path("transcripts")))
+
+    assert "maximum segment  30.0s" in report
+    assert "buffer limit     1024MB" in report
+    assert "disconnect grace 60s" in report
+
+
+def test_a_limit_of_zero_is_reported_as_switched_off() -> None:
+    report = describe_environment(
+        Config(
+            discord_token="x",
+            output_dir=Path("transcripts"),
+            max_buffer_mb=0.0,
+            disconnect_grace=0.0,
+        )
+    )
+
+    assert "buffer limit     none" in report
+    assert "disconnect grace none" in report

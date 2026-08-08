@@ -738,6 +738,11 @@ def _repaired(applied: bool) -> str:
     return "applied" if applied else "not needed"
 
 
+def _limit(value: float, unit: str) -> str:
+    """A ceiling that zero switches off, rendered so the report says which."""
+    return f"{value:g}{unit}" if value > 0 else "none"
+
+
 def describe_environment(config: Config) -> str:
     """Report the resolved runtime configuration without connecting to Discord.
 
@@ -756,6 +761,9 @@ def describe_environment(config: Config) -> str:
         f"language         {config.language or 'auto'}",
         f"segment gap      {config.segment_gap}s",
         f"minimum segment  {config.min_segment}s",
+        f"maximum segment  {config.max_segment}s",
+        f"buffer limit     {_limit(config.max_buffer_mb, 'MB')}",
+        f"disconnect grace {_limit(config.disconnect_grace, 's')}",
         f"output directory {config.output_dir}",
         f"keep audio       {config.keep_audio}",
         f"opus loaded      {ensure_opus()}",
