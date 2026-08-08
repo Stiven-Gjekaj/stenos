@@ -5,6 +5,9 @@ How a call becomes a transcript, and why each stage is built the way it is.
 ```
 Discord voice  ->  sink.py  ->  audio.py  ->  transcribe.py  ->  transcript.py
    packets        segments      16 kHz mono      text            merged file
+                     |______________|
+                   the conversion runs as the
+                   packets arrive, not after
 ```
 
 Every stage after the sink is pure: it takes values and returns values, touches
@@ -66,9 +69,20 @@ Whisper consumes 16 kHz mono float32. The conversion is exactly 3:1, and runs
 in process with numpy: a one-hour call yields several hundred segments, and
 spawning a resampler per segment would dominate the total.
 
-`pcm_to_mono` reinterprets the buffer as little endian int16 regardless of host
-byte order, discards a trailing partial frame, averages the two channels, and
-scales to `[-1, 1)`.
+It runs in two parts, as early as each can. Holding a whole call at the rate it
+arrives costs 192,000 bytes for every second of speech, and none of it can be
+released until transcription finishes, which is also when the model weights
+load. So `downmix` drops a channel as each packet arrives, reinterpreting the
+buffer as little endian int16 regardless of host byte order and discarding a
+trailing partial frame; and `downsample` drops the sample rate once a segment
+can no longer grow. What is held falls to a sixth, 32,000 bytes per second of
+speech rather than 192,000.
+
+Dropping a channel per packet is exact, because averaging a pair of samples
+depends on nothing outside that pair, so there is no state to carry across a
+packet boundary and no edge to get wrong. Dropping the rate is not, which is
+why it waits until the segment is complete. `to_float32` scales what is held to
+`[-1, 1)` when a model reads it.
 
 `resample` low-passes with a Hamming windowed sinc before decimating. Without
 that filter a 20 kHz component would fold to 4 kHz and land in the middle of
