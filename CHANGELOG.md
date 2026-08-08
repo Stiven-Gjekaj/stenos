@@ -55,6 +55,13 @@ left behind by earlier changes.
 
 ### Changed
 
+- **One way of sending a result, and one of declaring an untyped import.** Both
+  commands and both automatic stops each wrote out the same send, including the
+  same comment about why the attachment keyword is omitted rather than passed
+  as None; a failure in an error path could then raise over the error it was
+  reporting. The two backend loaders each assigned to a local for the sake of
+  its annotation, which is what `cast` says.
+
 - **`TimestampedSink.duration` no longer guards a case it cannot reach.** It
   fell back to zero when no segment existed, discarding the arrival span it had
   just computed, though every packet opens a segment and so the list is empty

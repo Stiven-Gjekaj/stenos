@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 import numpy as np
 import numpy.typing as npt
@@ -210,8 +210,7 @@ def _load_mlx_whisper() -> Callable[..., dict[str, object]]:
             "Install it with: uv sync --extra mlx. "
             "mlx runs on Apple Silicon only; use WHISPER_BACKEND=faster-whisper elsewhere."
         ) from exc
-    transcribe: Callable[..., dict[str, object]] = mlx_whisper.transcribe
-    return transcribe
+    return cast("Callable[..., dict[str, object]]", mlx_whisper.transcribe)
 
 
 class FasterWhisperBackend:
@@ -259,8 +258,7 @@ def _load_faster_whisper() -> Callable[..., Any]:
             "The faster-whisper backend requires faster-whisper, which is not installed. "
             "Install it with: uv sync --extra cuda."
         ) from exc
-    model: Callable[..., Any] = WhisperModel
-    return model
+    return cast("Callable[..., Any]", WhisperModel)
 
 
 def backend_status(

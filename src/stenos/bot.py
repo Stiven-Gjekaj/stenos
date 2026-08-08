@@ -611,9 +611,11 @@ def register_commands(bot: StenosBot, guild_ids: list[int] | None = None) -> Any
             voice_client = await channel.connect()
         except Exception as error:
             log.exception("Could not join %s", channel.name)
-            await ctx.followup.send(
+            await _reply(
+                ctx.followup,
                 f"Could not join {channel.name}: {error.__class__.__name__}: {error}. "
-                f"Check that the bot has the Connect permission for that channel."
+                f"Check that the bot has the Connect permission for that channel.",
+                None,
             )
             return
 
@@ -652,10 +654,12 @@ def register_commands(bot: StenosBot, guild_ids: list[int] | None = None) -> Any
             log.exception("Could not start recording")
             with contextlib.suppress(Exception):
                 await voice_client.disconnect()
-            await ctx.followup.send(
+            await _reply(
+                ctx.followup,
                 f"Could not start recording: {error.__class__.__name__}: {error}. "
                 f"Voice reception is currently broken in {receive_support().version}, "
-                f"tracked at {PYCORD_RECEIVE_ISSUE}."
+                f"tracked at {PYCORD_RECEIVE_ISSUE}.",
+                None,
             )
             return
 
