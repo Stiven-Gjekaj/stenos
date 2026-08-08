@@ -397,11 +397,7 @@ class StenosBot(discord.Bot):  # type: ignore[misc]
         message, attachment = await finish_recording(
             self, session, stopped=stopped, closing=closing
         )
-        with contextlib.suppress(Exception):
-            if attachment is None:
-                await session.text_channel.send(message)
-            else:
-                await session.text_channel.send(message, file=attachment)
+        await _reply(session.text_channel, message, attachment)
 
     async def enforce_buffer_limit(self) -> None:
         """End any recording that has outgrown the ceiling, and say why.
@@ -682,13 +678,15 @@ def register_commands(bot: StenosBot, guild_ids: list[int] | None = None) -> Any
         await ctx.defer()
         message, attachment = await finish_recording(bot, session)
 
-        # The keyword is omitted rather than passed as None. Discord's helper
-        # reads an attribute off whatever it is given, so an explicit None
-        # raises while building the message and the caller is left waiting.
-        if attachment is None:
-            await ctx.followup.send(message)
-        else:
-            await ctx.followup.send(message, file=attachment)
+        if not await _reply(ctx.followup, message, attachment):
+            # A deferred interaction is good for fifteen minutes. An hour of
+            # conversation on a CPU backend transcribes for longer than that,
+            # which is the case this project is built for, and the token is
+            # dead by the time there is anything to say. The transcript is
+            # already written, so the only thing at stake is whether anyone is
+            # told: the channel the recording was started from is told instead.
+            log.warning("The stop interaction expired, so the result went to the channel.")
+            await _reply(session.text_channel, message, attachment)
 
     @group.command(name="status", description="Report the state of the current recording")
     async def record_status(ctx: discord.ApplicationContext) -> None:
@@ -726,6 +724,24 @@ def _on_recording_finished(exception: BaseException | None = None) -> None:
     """
     if exception is not None:
         log.error("Recording ended with an error: %s", exception)
+
+
+async def _reply(destination: Any, message: str, attachment: Any) -> bool:
+    """Send a result, reporting whether it arrived rather than raising.
+
+    The keyword is omitted rather than passed as None. Discord's helper reads
+    an attribute off whatever it is given, so an explicit None raises while
+    building the message and the caller is left waiting.
+    """
+    try:
+        if attachment is None:
+            await destination.send(message)
+        else:
+            await destination.send(message, file=attachment)
+    except Exception as error:
+        log.warning("Could not deliver the result: %s: %s", error.__class__.__name__, error)
+        return False
+    return True
 
 
 def _attachment_for(result: RecordingResult, guild: Any) -> Any:

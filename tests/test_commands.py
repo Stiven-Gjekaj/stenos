@@ -976,3 +976,32 @@ async def test_start_answers_when_joining_the_channel_fails(tmp_path: Path) -> N
     assert "Connect permission" in ctx.followup.sent[0][0]
     # And no session left behind claiming to record a channel never joined.
     assert bot.sessions == {}
+
+
+async def test_a_stop_whose_interaction_expired_posts_to_the_channel(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A deferred interaction is good for fifteen minutes. An hour of speech on
+    # a CPU backend transcribes for longer, which is what this is built for, so
+    # the token is dead by the time there is anything to say. The transcript is
+    # written either way; the question is whether anybody is told.
+    monkeypatch.setattr(bot_module, "load_backend", lambda *a, **k: MockBackend(texts=["a line"]))
+    bot = make_bot(tmp_path)
+    channel = FakeVoiceChannel(2, "general", [])
+    author = FakeMember(11, "Alpha", channel=channel)
+    channel.members = [author]
+    await command(bot, "start")(FakeContext(1, author))
+    feed(bot.sessions[1])
+    session = bot.sessions[1]
+
+    ctx = FakeContext(1, author)
+
+    async def expired(content: str, file: Any = None) -> None:
+        raise RuntimeError("404 Not Found (error code: 10015): Unknown Webhook")
+
+    ctx.followup.send = expired  # type: ignore[method-assign]
+
+    await command(bot, "stop")(ctx)
+
+    assert session.text_channel.sent, "the result was lost when the token expired"
+    assert "Transcribed" in session.text_channel.sent[0][0]

@@ -144,6 +144,15 @@ left behind by earlier changes.
   without the Connect permission. Either way the caller watched a spinner until
   Discord gave up on the interaction. It now says which channel and why.
 
+- **A long transcription lost the message saying it had finished.** A deferred
+  interaction is good for fifteen minutes. An hour of conversation on a CPU
+  backend takes longer than that, which is the case this project describes
+  itself as being for, so the token was dead by the time there was anything to
+  say and the reply raised into a command handler with nothing to catch it. The
+  transcript was on disk and nobody was told. The result now goes to the
+  channel the recording was started from when the interaction will not take it,
+  which is where a recording that ends itself has always reported.
+
 ### Added
 
 - **The settings are checked against the two files that describe them.** The
