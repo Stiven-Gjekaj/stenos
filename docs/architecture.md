@@ -150,6 +150,24 @@ Three portability decisions live here, each covered by the compatibility suite:
   otherwise writes the system code page and translates line endings, so the
   same call would produce different bytes on different hosts.
 
+Alongside the transcript body, `write_sidecar` produces a JSON sidecar (`build_sidecar`) for downstream tooling with the following schema:
+
+- version: integer schema version, currently 1
+- channel: recorded channel name
+- recorded_at: ISO 8601 UTC timestamp
+- duration: call duration in seconds rounded to three decimal places
+- backend: transcription backend used
+- model: model name
+- speakers: map of string user IDs to display names
+- segments: list of segment dictionaries sorted by offset, each containing:
+  - user_id: integer participant ID
+  - speaker: display name or fallback
+  - start: start offset in seconds rounded to three decimal places
+  - duration: segment duration in seconds rounded to three decimal places
+  - text: transcribed text
+  - suppressed: optional string reason, present only when the segment was suppressed
+
+
 ---
 
 ## 5. Commands, `bot.py`

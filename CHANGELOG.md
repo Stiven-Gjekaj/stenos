@@ -13,6 +13,12 @@ sections below are therefore headed by the series rather than by one version.
 A pass over the whole codebase for defects, duplication, and things that were
 left behind by earlier changes.
 
+### Added
+
+- **A schema version is written to the JSON sidecar.** `build_sidecar` now carries
+  a `version: 1` field at the top level of the payload so downstream tools can
+  identify the sidecar structure without probing keys.
+
 ### Fixed
 
 - **The package shipped a conversion nothing called.** `pcm_to_mono` did in one
