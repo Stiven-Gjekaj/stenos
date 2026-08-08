@@ -859,7 +859,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.exit(2, f"configuration error: {error}\n")
 
     if args.check:
-        print(describe_environment(config))
+        print(describe_environment(config))  # noqa: T201  the report is this command's output
         return 0
 
     if not ensure_opus():

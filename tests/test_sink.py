@@ -235,8 +235,8 @@ class Data:
 
 
 class Member:
-    def __init__(self, id: int) -> None:
-        self.id = id
+    def __init__(self, member_id: int) -> None:
+        self.id = member_id
 
 
 def record_media(

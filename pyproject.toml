@@ -1,6 +1,6 @@
 [project]
 name = "stenos"
-version = "0.2.2.28"
+version = "0.2.2.29"
 description = "Discord voice recorder producing timestamped, speaker-attributed transcripts with local inference"
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
@@ -77,7 +77,33 @@ target-version = "py311"
 src = ["src", "tests"]
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "N", "UP", "B", "SIM", "C4", "RUF"]
+# The last seven were added once the codebase already satisfied them, so each
+# is a rule against drifting back rather than a cleanup left to do. RET and PIE
+# between them catch the returns and branches this release removed, and PTH the
+# os.path calls that Path replaced everywhere else.
+select = [
+    "E",
+    "F",
+    "W",
+    "I",
+    "N",
+    "UP",
+    "B",
+    "SIM",
+    "C4",
+    "RUF",
+    "A",
+    "FURB",
+    "ISC",
+    "LOG",
+    "PERF",
+    "PIE",
+    "PTH",
+    "RET",
+    "SLOT",
+    "T20",
+    "TID",
+]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["S101"]

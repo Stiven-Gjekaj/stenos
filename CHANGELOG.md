@@ -62,6 +62,13 @@ left behind by earlier changes.
   reporting. The two backend loaders each assigned to a local for the sake of
   its annotation, which is what `cast` says.
 
+- **Eleven more lint rule sets, added because the code already passed them.**
+  `RET`, `PIE`, `FURB`, `PERF`, `PTH`, `A`, `ISC`, `LOG`, `SLOT`, `T20`, and
+  `TID`. Each is a rule against drifting back rather than a cleanup left to do:
+  between them they cover the unnecessary returns, the collapsible branches,
+  and the redundant assignments this release removed by hand. Turning them on
+  found four more, including a test argument shadowing `id`.
+
 - **`TimestampedSink.duration` no longer guards a case it cannot reach.** It
   fell back to zero when no segment existed, discarding the arrival span it had
   just computed, though every packet opens a segment and so the list is empty

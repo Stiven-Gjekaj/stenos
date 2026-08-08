@@ -75,7 +75,9 @@ def test_the_changelog_reads_newest_first() -> None:
     # was newest when it was written, which is the section below the one it
     # should have gone above, so the two arrived in the order they were cut
     # rather than the reverse of it. A reader takes the top entry as current.
-    headings = re.findall(r"^## (\d+)\.(\d+)\.(\d+)", CHANGELOG.read_text(encoding="utf-8"), re.M)
+    headings = re.findall(
+        r"^## (\d+)\.(\d+)\.(\d+)", CHANGELOG.read_text(encoding="utf-8"), re.MULTILINE
+    )
     versions = [tuple(int(part) for part in heading) for heading in headings]
 
     assert versions == sorted(versions, reverse=True), versions

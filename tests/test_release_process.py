@@ -42,8 +42,7 @@ def workflow(name: str) -> dict:
     ``on`` is read through the boolean as well as the string, because YAML 1.1
     resolves a bare ``on:`` key to True and PyYAML follows it.
     """
-    document = yaml.safe_load((WORKFLOWS / name).read_text(encoding="utf-8"))
-    return document
+    return yaml.safe_load((WORKFLOWS / name).read_text(encoding="utf-8"))
 
 
 def triggers(name: str) -> dict:
