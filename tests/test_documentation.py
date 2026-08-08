@@ -23,6 +23,7 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 SOURCE = ROOT / "src" / "stenos"
 CHANGELOG = ROOT / "CHANGELOG.md"
+ARCHITECTURE = ROOT / "docs" / "architecture.md"
 
 # The wheel carries the package and a copy of the tests, but no README and no
 # sources to measure. platforms.yml runs the suite from exactly that, so there
@@ -183,3 +184,33 @@ def test_the_contributing_guide_counts_the_dependencies() -> None:
 
     assert stated is not None, "the guide no longer states a count"
     assert stated.group(1) == _WORDS[declared_dependencies()]
+
+
+def package_symbols() -> set[str]:
+    """Every module, class, function, and module level name the package defines."""
+    found: set[str] = set()
+    for path in sorted(SOURCE.glob("*.py")):
+        found.add(path.name)
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+                found.add(node.name)
+            elif isinstance(node, ast.Assign):
+                found |= {target.id for target in node.targets if isinstance(target, ast.Name)}
+    return found
+
+
+def documented_settings() -> set[str]:
+    """Environment variables, which the architecture page names alongside code."""
+    source = (SOURCE / "config.py").read_text(encoding="utf-8")
+    return set(re.findall(r'"([A-Z][A-Z_]+)"', source))
+
+
+def test_the_architecture_page_names_things_that_exist() -> None:
+    # It described the sink by a function called pcm_to_mono, and went on
+    # doing so after that function was replaced and then removed. A page about
+    # internals is read by somebody about to go and find them.
+    known = package_symbols() | documented_settings()
+    named = set(re.findall(r"`([A-Za-z_][A-Za-z0-9_]*(?:\.py)?)`", ARCHITECTURE.read_text("utf-8")))
+    missing = sorted(named - known)
+
+    assert not missing, f"named on the architecture page and absent from the package: {missing}"
