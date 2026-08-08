@@ -72,6 +72,13 @@ left behind by earlier changes.
 - **`_encryption_note` returned the empty string from two branches in a row.**
   One condition, stated once.
 
+- **A backend name was validated twice, in two places.** `resolve_backend` and
+  the `WHISPER_BACKEND` reader each folded case and separators, checked the
+  result against the same set, and raised their own wording, so adding a
+  backend meant accepting it in two places and forgetting one would refuse a
+  name the other allowed. One helper does it, and still names the setting when
+  the name came from one.
+
 ## 0.2.1 (2026-08-07)
 
 The first of the maintenance alphas. About a recording noticing that it has

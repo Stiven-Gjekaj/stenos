@@ -114,6 +114,24 @@ def bundled_backend() -> str | None:
     return None
 
 
+def _normalise_backend(name: str, *, setting: str | None = None) -> str:
+    """Fold a backend name to its canonical spelling, refusing an unknown one.
+
+    Shared by the setting and the resolver, which validated identically and
+    separately, so a new backend had to be accepted in two places. The message
+    names the setting when the name came from one, since whoever has to fix it
+    wants to be told which line to edit.
+    """
+    normalised = name.strip().lower().replace("_", "-")
+    if normalised in VALID_BACKENDS:
+        return normalised
+
+    supported = ", ".join(sorted(VALID_BACKENDS))
+    if setting is not None:
+        raise ConfigError(f"{setting} must be one of {supported}, got {name!r}")
+    raise ConfigError(f"Unknown transcription backend {name!r}. Supported: {supported}.")
+
+
 def resolve_backend(
     name: str = BACKEND_AUTO,
     *,
@@ -131,10 +149,7 @@ def resolve_backend(
     and ask for a backend that cannot be there. An explicit setting still wins,
     so anyone who knows better can override it.
     """
-    normalised = name.strip().lower().replace("_", "-")
-    if normalised not in VALID_BACKENDS:
-        supported = ", ".join(sorted(VALID_BACKENDS))
-        raise ConfigError(f"Unknown transcription backend {name!r}. Supported: {supported}.")
+    normalised = _normalise_backend(name)
     if normalised != BACKEND_AUTO:
         return normalised
 
@@ -232,11 +247,7 @@ def _read_backend(env: Mapping[str, str]) -> str:
     raw = _lookup(env, "WHISPER_BACKEND")
     if raw is None:
         return DEFAULT_BACKEND
-    normalised = raw.strip().lower().replace("_", "-")
-    if normalised not in VALID_BACKENDS:
-        supported = ", ".join(sorted(VALID_BACKENDS))
-        raise ConfigError(f"WHISPER_BACKEND must be one of {supported}, got {raw!r}")
-    return normalised
+    return _normalise_backend(raw, setting="WHISPER_BACKEND")
 
 
 def _read_language(env: Mapping[str, str]) -> str | None:
