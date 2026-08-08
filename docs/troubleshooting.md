@@ -64,16 +64,29 @@ A standalone executable carries its own copy and should never report `False`
 for this reason. If it does, the download is damaged; check it against
 `SHA256SUMS`.
 
-### Otherwise it is probably DAVE
+### Otherwise, check what the repairs report
 
 Discord began enforcing DAVE, its end-to-end encryption protocol for voice, on
-2 March 2026. py-cord added DAVE support for voice *sending* in 2.8.0, and its
-own documentation notes that recording may not work as expected under the
-protocol. Receive-side support is upstream work.
+2 March 2026, and py-cord 2.8.1 loses received audio in four separate ways
+around it. Stenos repairs each one at startup, having first checked that the
+installed py-cord actually has that defect, and `--check` reports what it
+found:
 
-There is no workaround inside Stenos. Everything downstream of the sink is
-unaffected, so the moment py-cord lands receive-side DAVE this works with no
-change here.
+```
+encryption       davey 0.1.6, protocol 1
+receive repair   applied (py-cord discarded unencrypted audio and mishandled the packet extension)
+decode repair    applied
+handoff repair   applied
+```
+
+`unavailable (davey is not installed)` on the encryption line means encrypted
+audio cannot be decoded at all; install the `voice` extra. Otherwise `applied`
+and `not needed` are both fine: the second means the installed py-cord does not
+have that defect.
+
+A recording that captured nothing says which of the two reasons applied, and
+names the encryption state when that is what explains it, so the message in the
+channel is usually more specific than anything here.
 
 ---
 

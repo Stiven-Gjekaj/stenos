@@ -104,6 +104,13 @@ left behind by earlier changes.
   a real run and in no example of one. Those lines are the ones somebody
   reading that page is being asked to look at.
 
+- **The troubleshooting page still said an encrypted call could not be
+  recorded.** Its DAVE section read "there is no workaround inside Stenos" and
+  told the reader to wait for py-cord, which four repairs and two releases ago
+  stopped being true. Anybody who reached that page for the reason it describes
+  was told to give up on something that now works. It explains the repairs and
+  what `--check` reports about them instead.
+
 ## 0.2.1 (2026-08-07)
 
 The first of the maintenance alphas. About a recording noticing that it has
