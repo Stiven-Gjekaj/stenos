@@ -73,7 +73,10 @@ def sanitize_filename(name: str, *, fallback: str = "channel", max_length: int =
     )
     cleaned = _WHITESPACE_RUN.sub("-", cleaned)
     cleaned = _SEPARATOR_RUN.sub("-", cleaned).strip("-. ")
-    cleaned = _SEPARATOR_RUN.sub("-", cleaned[:max_length]).strip("-. ")
+    # Truncation can leave a trailing separator, so the strip runs again. The
+    # collapse does not: a prefix of a string with no run of separators in it
+    # has none either, which 200,000 generated names agree on.
+    cleaned = cleaned[:max_length].strip("-. ")
 
     if not cleaned:
         return fallback

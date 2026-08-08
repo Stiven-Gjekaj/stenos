@@ -67,9 +67,7 @@ def _all_silence(segments: list[Segment]) -> bool:
 
 def _encryption_note(dave: DaveState | None) -> str:
     """A sentence naming the encryption state, when it explains the failure."""
-    if dave is None:
-        return ""
-    if dave.receives_audio:
+    if dave is None or dave.receives_audio:
         return ""
     if not dave.support.available:
         return (

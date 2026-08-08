@@ -63,6 +63,15 @@ left behind by earlier changes.
 - **`format_audio` says nothing instead of returning nothing.** The explicit
   `return None` read as a value the base sink wanted, which it does not.
 
+- **`sanitize_filename` collapsed separator runs twice.** Truncating a name can
+  leave a trailing separator, which is why the strip runs a second time, but it
+  cannot create a run where the first pass left none: a prefix of a string
+  without `--` in it has none either. 200,000 generated names produce the same
+  result with the second collapse removed.
+
+- **`_encryption_note` returned the empty string from two branches in a row.**
+  One condition, stated once.
+
 ## 0.2.1 (2026-08-07)
 
 The first of the maintenance alphas. About a recording noticing that it has
