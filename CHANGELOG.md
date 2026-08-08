@@ -8,45 +8,6 @@ of the [README](README.md). A release covers a whole series: every commit
 sharing an `X.N.V` belongs to it, and the tag is cut at the last of them. The
 sections below are therefore headed by the series rather than by one version.
 
-## 0.2.0 (2026-08-07)
-
-The first beta, and the first release that is not a pre-release. It opens the
-maintenance line: fixes and upkeep, cut as alphas whenever enough of them
-accumulate, while a graphical interface is built alongside. Nothing in the
-recording path changes here.
-
-### Fixed
-
-- **The release badge was a picture of the word `none`.** It was a hardcoded
-  shields.io value sitting beside a claim, two lines below it, that both
-  version badges resolve from what GitHub records rather than from anything
-  kept in step by hand. That was true of the pre-release badge and false of
-  this one, and publishing a stable release is exactly the moment the
-  difference would have shown, to a reader who had already concluded there was
-  nothing to install. It is now the same query as its neighbour without
-  `include_prereleases`, and a test refuses a hardcoded value in its place.
-
-- **Both install scripts said every release was a pre-release.** That was the
-  reason the default path could not resolve a version, and it stops being the
-  reason the moment a stable release exists. After that the same message could
-  only appear because a request failed, while naming a cause that no longer
-  applies. Neither script can tell the two apart, so neither claims to: they
-  now report that the newest stable release could not be worked out, and
-  suggest `--pre` for a project that has only pre-releases.
-
-  The path itself is unchanged. It has also never run, since `releases/latest`
-  answers 404 until a release is neither a draft nor a pre-release, so
-  `install.sh` is now exercised end to end against captured payloads for both
-  shapes the endpoint returns. The single release the default path reads is not
-  the array the `--pre` path reads, and one `sed` parses both.
-
-- **Three claims in the README that were about to expire, or already had.** The
-  quick start explained that the default install command would report there is
-  no stable release until the first beta, which is this one. The section on
-  cutting a release still said the workflow waits for `ci` and `compat`, which
-  0.1.6 changed to every workflow that ran, for the reason that change records.
-  And the test count badge read 453 against 474 tests.
-
 ## 0.2.2 (unreleased)
 
 A pass over the whole codebase for defects, duplication, and things that were
@@ -60,6 +21,12 @@ left behind by earlier changes.
   still tested, so eight tests were checking code that could not run. Those now
   exercise the pair that does run, and the one step version stays in the test
   file as an independent reference for it to be checked against.
+
+- **The changelog read out of order.** Each new section was inserted above what
+  was the newest section when it was written, which is one below where it
+  belonged, so 0.2.0 and 0.2.1 came out in the order they were cut rather than
+  the reverse. Reordered, and a test now refuses a file whose headings do not
+  descend, since the top entry is what a reader takes as current.
 
 ## 0.2.1 (2026-08-07)
 
@@ -120,6 +87,45 @@ stopped receiving anything.
 
 - **`DISCONNECT_GRACE`**, for how long to wait, alongside the other limits in
   `.env.example`. Zero waits forever.
+
+## 0.2.0 (2026-08-07)
+
+The first beta, and the first release that is not a pre-release. It opens the
+maintenance line: fixes and upkeep, cut as alphas whenever enough of them
+accumulate, while a graphical interface is built alongside. Nothing in the
+recording path changes here.
+
+### Fixed
+
+- **The release badge was a picture of the word `none`.** It was a hardcoded
+  shields.io value sitting beside a claim, two lines below it, that both
+  version badges resolve from what GitHub records rather than from anything
+  kept in step by hand. That was true of the pre-release badge and false of
+  this one, and publishing a stable release is exactly the moment the
+  difference would have shown, to a reader who had already concluded there was
+  nothing to install. It is now the same query as its neighbour without
+  `include_prereleases`, and a test refuses a hardcoded value in its place.
+
+- **Both install scripts said every release was a pre-release.** That was the
+  reason the default path could not resolve a version, and it stops being the
+  reason the moment a stable release exists. After that the same message could
+  only appear because a request failed, while naming a cause that no longer
+  applies. Neither script can tell the two apart, so neither claims to: they
+  now report that the newest stable release could not be worked out, and
+  suggest `--pre` for a project that has only pre-releases.
+
+  The path itself is unchanged. It has also never run, since `releases/latest`
+  answers 404 until a release is neither a draft nor a pre-release, so
+  `install.sh` is now exercised end to end against captured payloads for both
+  shapes the endpoint returns. The single release the default path reads is not
+  the array the `--pre` path reads, and one `sed` parses both.
+
+- **Three claims in the README that were about to expire, or already had.** The
+  quick start explained that the default install command would report there is
+  no stable release until the first beta, which is this one. The section on
+  cutting a release still said the workflow waits for `ci` and `compat`, which
+  0.1.6 changed to every workflow that ran, for the reason that change records.
+  And the test count badge read 453 against 474 tests.
 
 ## 0.1.6 (2026-08-06)
 

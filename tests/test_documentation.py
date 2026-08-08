@@ -20,6 +20,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 SOURCE = ROOT / "src" / "stenos"
+CHANGELOG = ROOT / "CHANGELOG.md"
 
 # The wheel carries the package and a copy of the tests, but no README and no
 # sources to measure. platforms.yml runs the suite from exactly that, so there
@@ -64,6 +65,17 @@ def test_the_test_count_badge_is_current() -> None:
 
     assert stated is not None, "the tests badge is no longer a count"
     assert int(stated.group(1)) == collected_tests()
+
+
+def test_the_changelog_reads_newest_first() -> None:
+    # It did not. Each of 0.2.0 and 0.2.1 was inserted above the section that
+    # was newest when it was written, which is the section below the one it
+    # should have gone above, so the two arrived in the order they were cut
+    # rather than the reverse of it. A reader takes the top entry as current.
+    headings = re.findall(r"^## (\d+)\.(\d+)\.(\d+)", CHANGELOG.read_text(encoding="utf-8"), re.M)
+    versions = [tuple(int(part) for part in heading) for heading in headings]
+
+    assert versions == sorted(versions, reverse=True), versions
 
 
 #: One row of the source table: a module and the length claimed for it.
