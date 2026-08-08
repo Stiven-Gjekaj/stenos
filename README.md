@@ -96,7 +96,7 @@ fanless laptop that will thermally throttle under sustained inference.
 - Audio reduced to what a model reads as each segment closes, so an hour holds 115 MB
 - A recording that outgrows its buffer stops itself rather than the host
 - A lost voice connection ends the recording and keeps what it captured
-- Four py-cord defects that lose received audio or end a recording, repaired
+- Five py-cord defects that lose received audio or end a recording, repaired
 
 </td>
 <td width="50%" valign="top">
@@ -401,14 +401,14 @@ becomes text, and text becomes one ordered transcript.
 | --- | --- | --- | --- |
 | **Receiving** | sink.py | 464 | Places packets on the media clock they carry and splits segments on silence; loads libopus |
 | **Transport** | voice.py | 200 | Reads the end-to-end encryption state a voice connection negotiated |
-| **Transport** | upstream.py | 826 | Repairs the py-cord 2.8.1 defects that lose received audio or end a recording, when they are present |
+| **Transport** | upstream.py | 834 | Repairs the py-cord 2.8.1 defects that lose received audio or end a recording, when they are present |
 | **Conversion** | audio.py | 311 | Downmixes and resamples to 16 kHz mono, discarding fragments too short to carry speech |
 | **Verification** | integrity.py | 111 | Separates a recording that captured nothing from a call in which nobody spoke |
 | **Transcription** | transcribe.py | 338 | Backend protocol, mlx and faster-whisper implementations, and the segment loop |
 | **Output** | transcript.py | 227 | Merges, orders, and writes the transcript and its sidecar portably |
 | **Commands** | bot.py | 897 | Slash commands, session state, the offline pipeline, and the CLI |
 | **Configuration** | config.py | 305 | Validated environment parsing and platform-aware backend resolution |
-| **Total** | **11 files** | **3705** | Plus 5971 lines of tests |
+| **Total** | **11 files** | **3713** | Plus 5971 lines of tests |
 
 ```
 src/stenos/      the bot (sink, transport, audio, transcription, output, commands)

@@ -169,6 +169,12 @@ left behind by earlier changes.
   stopped and the bot leaves. The consent section and the architecture page
   both say so, since it is now a guarantee rather than an intention.
 
+- **The repairs module did not describe one of its own repairs.** Its header
+  accounts for each defect it works around and why, and the jitter buffer flush
+  that 0.1.5 added was never written into it, so the module explained three of
+  the four things it does. The README undercounted for the same reason, at four
+  where its own wording makes five.
+
 ### Added
 
 - **The settings are checked against the two files that describe them.** The

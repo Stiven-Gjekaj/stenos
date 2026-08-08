@@ -1888,7 +1888,7 @@ wheels = [
 
 [[package]]
 name = "stenos"
-version = "0.2.2.26"
+version = "0.2.2.27"
 source = { editable = "." }
 dependencies = [
     { name = "certifi" },

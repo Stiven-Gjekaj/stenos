@@ -44,6 +44,14 @@ earlier. It either corrupts the audio or raises inside the router thread, which
 ends the recording. Passthrough follows a DAVE downgrade, reset, or transition
 recovery, so in practice it follows somebody joining or leaving the channel.
 
+A fourth sits in front of both, in the jitter buffer. ``_get_next_packet``
+flushes the whole buffer the first time the next packet is out of order,
+returns the earliest of them, and drops the rest, having already advanced the
+buffer's idea of what it has transmitted past all of them. Since the buffer is
+polled with no timeout this fires at the first sign of a gap rather than after
+any wait, and the likeliest place for a gap is where a stream starts. The
+dropped packets are held and handed out one per call instead.
+
 Three smaller things live here for the same reason. A packet that will not
 decode is skipped rather than allowed to end the recording. The router thread is
 stopped from reporting its own stop as an error. And py-cord is stopped from
