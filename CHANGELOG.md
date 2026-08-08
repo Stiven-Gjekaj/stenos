@@ -136,6 +136,14 @@ left behind by earlier changes.
   One branch covers both, and the status still says which happened, since only
   one of them means the read itself failed.
 
+- **A voice channel that could not be joined left the command unanswered.**
+  `/record start` defers, then joins, then starts recording. The last of those
+  is guarded, with a comment saying that a failure there used to leave the
+  command hanging, and the join between them was not. Joining is the step most
+  likely to fail outright: it times out after thirty seconds and refuses
+  without the Connect permission. Either way the caller watched a spinner until
+  Discord gave up on the interaction. It now says which channel and why.
+
 ### Added
 
 - **The settings are checked against the two files that describe them.** The

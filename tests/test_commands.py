@@ -952,3 +952,27 @@ async def test_a_probe_that_raises_reads_as_still_connected(tmp_path: Path) -> N
 
     assert 1 in bot.sessions
     assert session.disconnected_since is None
+
+
+async def test_start_answers_when_joining_the_channel_fails(tmp_path: Path) -> None:
+    # Joining voice times out after thirty seconds and refuses outright without
+    # the Connect permission, and it runs after the deferral. Raising there
+    # answered nothing, so the caller watched a spinner until Discord gave up.
+    bot = make_bot(tmp_path)
+    channel = FakeVoiceChannel(2, "general", [])
+    author = FakeMember(11, "Alpha", channel=channel)
+    channel.members = [author]
+
+    async def refuse() -> Any:
+        raise TimeoutError("timed out waiting for the voice handshake")
+
+    channel.connect = refuse  # type: ignore[method-assign]
+    ctx = FakeContext(1, author)
+
+    await command(bot, "start")(ctx)
+
+    assert ctx.followup.sent, "the deferred interaction was left unanswered"
+    assert "Could not join general" in ctx.followup.sent[0][0]
+    assert "Connect permission" in ctx.followup.sent[0][0]
+    # And no session left behind claiming to record a channel never joined.
+    assert bot.sessions == {}

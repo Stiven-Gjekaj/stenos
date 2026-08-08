@@ -606,7 +606,21 @@ def register_commands(bot: StenosBot, guild_ids: list[int] | None = None) -> Any
         # caller is told the application did not respond.
         await ctx.defer()
 
-        voice_client = await channel.connect()
+        # Guarded for the same reason the recording below is. Joining voice is
+        # the step most likely to fail outright: it times out after thirty
+        # seconds, and it refuses outright without the Connect permission.
+        # Raising here answers nothing, and the deferred reply the line above
+        # sent stays a spinner until Discord gives up on it.
+        try:
+            voice_client = await channel.connect()
+        except Exception as error:
+            log.exception("Could not join %s", channel.name)
+            await ctx.followup.send(
+                f"Could not join {channel.name}: {error.__class__.__name__}: {error}. "
+                f"Check that the bot has the Connect permission for that channel."
+            )
+            return
+
         sink = TimestampedSink(
             segment_gap=bot.config.segment_gap,
             max_segment=bot.config.max_segment,
