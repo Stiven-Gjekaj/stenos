@@ -111,6 +111,11 @@ left behind by earlier changes.
   was told to give up on something that now works. It explains the repairs and
   what `--check` reports about them instead.
 
+- **The dependency badge counted three against four declared.** `certifi` was
+  added when a frozen build turned out to carry no certificate store, and the
+  badge was not part of that change. It is checked against `pyproject.toml`
+  now, like the other counts.
+
 ## 0.2.1 (2026-08-07)
 
 The first of the maintenance alphas. About a recording noticing that it has

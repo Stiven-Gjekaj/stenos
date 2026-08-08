@@ -15,6 +15,7 @@ import ast
 import re
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -153,3 +154,15 @@ def test_every_name_one_module_takes_from_another_is_exported() -> None:
             ]
 
     assert not missing, "\n".join(missing)
+
+
+def test_the_dependency_badge_counts_the_dependencies() -> None:
+    # It read three while pyproject declared four. certifi was added when a
+    # frozen build turned out to carry no certificate store, and the badge was
+    # not part of that change, so it undercounted from then on.
+    declared = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    count = len(declared["project"]["dependencies"])
+    stated = re.search(r"badge/dependencies-(\d+)_direct", readme())
+
+    assert stated is not None, "the dependencies badge is no longer a count"
+    assert int(stated.group(1)) == count
