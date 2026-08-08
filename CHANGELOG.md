@@ -130,6 +130,12 @@ left behind by earlier changes.
   is `split_hms` now and the two render its result, so the rule that hours are
   not wrapped at 24 is stated once rather than relied on twice.
 
+- **`dave_state` built the same absent-session verdict twice.** A voice client
+  whose connection could not be read and a call that negotiated no session
+  produced identical results but for the status word, written out separately.
+  One branch covers both, and the status still says which happened, since only
+  one of them means the read itself failed.
+
 ## 0.2.1 (2026-08-07)
 
 The first of the maintenance alphas. About a recording noticing that it has

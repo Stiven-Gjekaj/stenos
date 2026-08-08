@@ -160,29 +160,24 @@ def dave_state(voice_client: Any) -> DaveState:
     """
     support = dave_support()
     connection = getattr(voice_client, "_connection", None)
-    if connection is None:
-        return DaveState(
-            support=support,
-            negotiated_version=0,
-            session_present=False,
-            ready=False,
-            status="unknown",
-        )
-
-    negotiated = int(getattr(connection, "dave_protocol_version", 0) or 0)
     session = getattr(connection, "dave_session", None)
+
     if session is None:
+        # Two ways to get here, told apart by the status: a client this version
+        # of py-cord holds the state somewhere else on, and a call that has not
+        # negotiated a session. Neither yields audio, and only the first means
+        # the read itself failed.
         return DaveState(
             support=support,
-            negotiated_version=negotiated,
+            negotiated_version=int(getattr(connection, "dave_protocol_version", 0) or 0),
             session_present=False,
             ready=False,
-            status="absent",
+            status="absent" if connection is not None else "unknown",
         )
 
     return DaveState(
         support=support,
-        negotiated_version=negotiated,
+        negotiated_version=int(getattr(connection, "dave_protocol_version", 0) or 0),
         session_present=True,
         ready=bool(getattr(session, "ready", False)),
         status=_status_name(getattr(session, "status", None)),
