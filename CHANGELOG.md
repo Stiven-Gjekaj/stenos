@@ -53,6 +53,16 @@ left behind by earlier changes.
   `Segment.snapshot` returns the two together, and `buffered_bytes` measures
   each segment under its own lock rather than reaching into it.
 
+### Changed
+
+- **`TimestampedSink.duration` no longer guards a case it cannot reach.** It
+  fell back to zero when no segment existed, discarding the arrival span it had
+  just computed, though every packet opens a segment and so the list is empty
+  only when that span is zero too. The spans are now one list with one maximum.
+
+- **`format_audio` says nothing instead of returning nothing.** The explicit
+  `return None` read as a value the base sink wanted, which it does not.
+
 ## 0.2.1 (2026-08-07)
 
 The first of the maintenance alphas. About a recording noticing that it has

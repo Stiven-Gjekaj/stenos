@@ -390,7 +390,6 @@ class TimestampedSink(Sink):
 
     def format_audio(self, audio: Any) -> None:
         """Required by the base sink. Nothing is written to disk during recording."""
-        return None
 
     def cleanup(self) -> None:
         """Close every open segment, reduce what is outstanding, and finish.
@@ -460,5 +459,6 @@ class TimestampedSink(Sink):
         with self._lock:
             if self._origin is None or self._last_arrival is None:
                 return 0.0
-            ends = [segment.end for segment in self._segments]
-            return max(self._last_arrival - self._origin, *ends) if ends else 0.0
+            spans = [self._last_arrival - self._origin]
+            spans += [segment.end for segment in self._segments]
+            return max(spans)
