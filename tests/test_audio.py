@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import struct
+import threading
 
 import numpy as np
 import pytest
@@ -328,3 +329,36 @@ def test_quantising_clips_rather_than_wrapping() -> None:
     raw = np.frombuffer(to_int16(over), dtype="<i2")
 
     assert list(raw) == [32767, -32768, 0]
+
+
+def test_a_snapshot_pairs_the_audio_with_the_rate_it_is_at() -> None:
+    # Read separately, a caller can take the audio from before a reduction and
+    # the rate from after it, and then treat 48 kHz audio as 16 kHz: three
+    # times too long, and nothing a model recognises. The reducer runs on its
+    # own thread, so the two have to be taken together.
+    segment = Segment(user_id=1, start=0.0)
+    segment.extend(bytes(BYTES_PER_SECOND))
+
+    took = threading.Event()
+    reduced = threading.Event()
+    seen: list[tuple[int, int]] = []
+
+    def read() -> None:
+        took.wait()
+        seen.append((lambda pair: (len(pair[0]), pair[1]))(segment.snapshot()))
+
+    def reduce() -> None:
+        took.set()
+        segment.reduce()
+        reduced.set()
+
+    threads = [threading.Thread(target=reduce), threading.Thread(target=read)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=5.0)
+
+    held, rate = seen[0]
+    # Either pair is fine; a mixture is not. One second of audio stays one
+    # second whichever side of the reduction it was read from.
+    assert held / (rate * 2) == pytest.approx(1.0)

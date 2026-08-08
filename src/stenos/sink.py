@@ -426,7 +426,10 @@ class TimestampedSink(Sink):
     def buffered_bytes(self) -> int:
         """Audio currently held in memory, across every segment."""
         with self._lock:
-            return sum(len(segment.pcm) for segment in self._segments)
+            segments = list(self._segments)
+        # Each read under its own lock, and outside the sink's: a segment being
+        # reduced while this runs would otherwise be measured mid-swap.
+        return sum(segment.held() for segment in segments)
 
     @property
     def packet_count(self) -> int:

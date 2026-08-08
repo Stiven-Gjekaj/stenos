@@ -42,6 +42,17 @@ left behind by earlier changes.
   `to_int16` and `resolve_speaker` which were omitted beside their siblings,
   and a test refuses an import of anything a module does not declare.
 
+- **A segment's audio and its sample rate could be read as a mismatched pair.**
+  `reduce` writes both under the segment's lock, precisely so a reader cannot
+  see one without the other, and `segment_to_audio` then read them one at a
+  time without it. A reduction landing between the two accesses yields 48 kHz
+  audio labelled 16 kHz, which is three times too long and transcribes as
+  nothing. Demonstrated by forcing the interleaving; the shipped path joins the
+  reducer before transcribing, so it was reachable only by a future caller.
+
+  `Segment.snapshot` returns the two together, and `buffered_bytes` measures
+  each segment under its own lock rather than reaching into it.
+
 ## 0.2.1 (2026-08-07)
 
 The first of the maintenance alphas. About a recording noticing that it has

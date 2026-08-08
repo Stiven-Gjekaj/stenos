@@ -241,6 +241,23 @@ class Segment:
             self.pcm = bytearray(reduced)
             self.sample_rate = TARGET_SAMPLE_RATE
 
+    def snapshot(self) -> tuple[bytes, int]:
+        """The audio held and the rate it is held at, read as one.
+
+        Taken together under the lock for the same reason ``reduce`` writes
+        them together under it. Read separately, a caller can take the audio
+        before a reduction and the rate after it, and then treat 48 kHz audio
+        as though it were 16 kHz, which is a third of the speed and transcribes
+        as nothing recognisable.
+        """
+        with self._lock:
+            return bytes(self.pcm), self.sample_rate
+
+    def held(self) -> int:
+        """Bytes of audio currently buffered."""
+        with self._lock:
+            return len(self.pcm)
+
     def clear(self) -> None:
         """Release the buffered audio, once there is nothing left to read it for."""
         with self._lock:
@@ -266,10 +283,11 @@ def segment_to_audio(segment: Segment) -> npt.NDArray[np.float32]:
     its worker drained, is resampled here instead, so the caller gets the same
     audio either way.
     """
-    samples = to_float32(segment.pcm)
-    if segment.sample_rate == TARGET_SAMPLE_RATE:
+    pcm, sample_rate = segment.snapshot()
+    samples = to_float32(pcm)
+    if sample_rate == TARGET_SAMPLE_RATE:
         return samples
-    return resample(samples, segment.sample_rate)
+    return resample(samples, sample_rate)
 
 
 #: Only a fallback for a direct call. config.DEFAULT_MIN_SEGMENT is the setting,
