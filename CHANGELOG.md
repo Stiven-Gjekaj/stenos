@@ -28,6 +28,12 @@ left behind by earlier changes.
   the reverse. Reordered, and a test now refuses a file whose headings do not
   descend, since the top entry is what a reader takes as current.
 
+- **The minimum segment length was declared twice.** `audio` and `config` each
+  defined it as 0.3, so changing the setting in one left the other disagreeing
+  and the disagreement would show only where a caller relied on the default.
+  `config` owns the settings and every caller inside the package passes its
+  value, so what is left in `audio` is a private fallback named as one.
+
 ## 0.2.1 (2026-08-07)
 
 The first of the maintenance alphas. About a recording noticing that it has

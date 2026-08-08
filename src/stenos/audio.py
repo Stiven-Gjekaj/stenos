@@ -74,8 +74,6 @@ _INT16_FULL_SCALE = 32768.0
 #: new Nyquist frequency while staying inexpensive for short segments.
 _TAPS_PER_FACTOR = 24
 
-DEFAULT_MIN_SEGMENT = 0.3
-
 try:  # pragma: no cover - depends on whether scipy is installed
     from scipy.signal import resample_poly as _resample_poly
 except ImportError:  # pragma: no cover - the numpy path is the default
@@ -273,10 +271,17 @@ def segment_to_audio(segment: Segment) -> npt.NDArray[np.float32]:
     return resample(samples, segment.sample_rate)
 
 
+#: Only a fallback for a direct call. config.DEFAULT_MIN_SEGMENT is the setting,
+#: and every caller inside the package passes it rather than relying on this.
+#: Not imported from there, because config would then import audio and audio
+#: config.
+_DEFAULT_MIN_SEGMENT = 0.3
+
+
 def prepare_segments(
     segments: Iterable[Segment],
     *,
-    min_segment: float = DEFAULT_MIN_SEGMENT,
+    min_segment: float = _DEFAULT_MIN_SEGMENT,
 ) -> list[Segment]:
     """Drop segments too short to carry speech.
 
