@@ -51,6 +51,13 @@ sections below are therefore headed by the series rather than by one version.
   directory to live in, could pass it. A name is now shortened to 32 inside a
   file name, which puts the worst case at 161.
 
+- **A packet of odd length ended the recording.** numpy cannot read an odd
+  buffer as 16 bit and raises rather than truncating, and the downmix runs
+  inside `write`, which py-cord calls on its router thread. One malformed
+  packet therefore stopped that thread and cost every second of audio that
+  would have followed. The trailing partial sample is now discarded the way the
+  trailing partial frame beside it always was.
+
 ### Added
 
 - **Audio can be written to disk.** `write_speaker_wav` lays one participant's

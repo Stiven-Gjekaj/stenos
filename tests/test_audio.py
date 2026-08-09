@@ -28,6 +28,7 @@ from stenos.sink import (
     BYTES_PER_SECOND,
     DISCORD_CHANNELS,
     DISCORD_SAMPLE_RATE,
+    DISCORD_SAMPLE_WIDTH,
     MONO_BYTES_PER_SECOND,
     Segment,
 )
@@ -416,3 +417,17 @@ def test_a_speaker_with_no_segments_writes_an_empty_file(tmp_path: Path) -> None
     data, _rate = read_wav(write_speaker_wav(tmp_path / "silent.wav", []))
 
     assert len(data) == 0
+
+
+@pytest.mark.parametrize("size", [1, 3, 5, 1921])
+def test_a_packet_of_odd_length_is_truncated_rather_than_refused(size: int) -> None:
+    # numpy cannot read an odd buffer as 16 bit and raises rather than
+    # truncating. That raise reaches py-cord's router thread through the sink,
+    # which ends the thread and the recording with it, so one malformed packet
+    # would cost every second of audio after it.
+    payload = bytes(range(256)) * 16
+
+    result = downmix(payload[:size])
+
+    assert len(result) % DISCORD_SAMPLE_WIDTH == 0
+    assert len(result) == (size // (DISCORD_SAMPLE_WIDTH * DISCORD_CHANNELS)) * DISCORD_SAMPLE_WIDTH

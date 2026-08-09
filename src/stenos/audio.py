@@ -88,9 +88,14 @@ def _stereo_frames(pcm: bytes | bytearray) -> npt.NDArray[np.int16]:
     """Interleaved stereo bytes as a frame by channel array.
 
     A trailing partial frame is discarded, which can occur if a packet is
-    truncated in transit.
+    truncated in transit. So is a trailing partial sample: a buffer whose
+    length is odd cannot be read as 16 bit at all, and numpy raises rather
+    than truncating. That raise reaches py-cord's router thread through the
+    sink, which ends the thread and the recording with it, so one malformed
+    packet would cost every second of audio that followed it.
     """
-    raw = np.frombuffer(bytes(pcm), dtype="<i2")
+    usable = len(pcm) - len(pcm) % DISCORD_SAMPLE_WIDTH
+    raw = np.frombuffer(bytes(pcm)[:usable], dtype="<i2")
     frames = raw.size // DISCORD_CHANNELS
     if frames == 0:
         return np.zeros((0, DISCORD_CHANNELS), dtype=np.int16)

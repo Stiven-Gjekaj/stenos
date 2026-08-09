@@ -531,3 +531,14 @@ def test_a_packet_arriving_after_cleanup_is_refused() -> None:
 
     assert sink.packet_count == before
     assert sink.buffered_bytes == held
+
+
+def test_a_truncated_packet_does_not_end_the_recording() -> None:
+    # write runs on py-cord's router thread. Anything raising there stops the
+    # thread, and the recording stops with it.
+    sink = TimestampedSink(clock=ScriptedClock([0.0, 0.02]))
+
+    sink.write(FRAME + b"\x07", 1)
+    sink.write(FRAME, 1)
+
+    assert sink.packet_count == 2
