@@ -19,10 +19,11 @@ import discord
 from discord.ext import tasks
 
 from . import __version__
-from .audio import Segment, prepare_segments, write_speaker_wav
+from .audio import TARGET_SAMPLE_RATE, Segment, prepare_segments, write_speaker_wav
 from .config import Config, ConfigError, certificate_bundle, load_config
 from .integrity import check_recording
 from .sink import OPUS_PATH_VARIABLE, TimestampedSink, bundle_directory, ensure_opus
+from .spill import SPILL_SUFFIX, SpillWriter
 from .transcribe import (
     BackendUnavailableError,
     ProgressCallback,
@@ -39,6 +40,7 @@ from .transcript import (
     sanitize_filename,
     split_hms,
     transcript_paths,
+    transcript_stem,
     write_sidecar,
     write_transcript,
 )
@@ -93,13 +95,26 @@ class RecordingResult:
 
 
 def discard_audio(sink: TimestampedSink) -> None:
-    """Release the buffered audio held by a sink.
+    """Release the audio held by a sink, wherever it is being held.
 
-    Recordings are held in memory rather than on disk, so discarding means
-    emptying the buffers once the transcript has been written.
+    A recording that stayed inside its memory ceiling is emptied. One that
+    outgrew it also has a directory of samples to take away, which is only safe
+    here: this runs after the transcript and the sidecar are on disk, so what
+    is being removed has already been read and written out.
+
+    A recording that ends any other way leaves the directory behind on purpose.
+    That is the whole point of it, and ``--recover`` is what reads it.
     """
     for segment in sink.segments():
         segment.clear()
+    storage = sink.storage
+    if storage is not None:
+        try:
+            storage.discard()
+        except OSError:
+            # The transcript is already written, so this costs disk rather than
+            # the recording, and the directory can be removed by hand.
+            log.warning("Could not remove %s.", storage.directory, exc_info=True)
 
 
 #: Longest a speaker's name may run inside an audio file name.
@@ -413,19 +428,29 @@ class StenosBot(discord.Bot):  # type: ignore[misc]
         stopped twice by two checks overlapping, and so the stop command sees a
         recording that is already ending as one that is not there.
         """
-        limit = self.config.max_buffer_mb
-        if limit <= 0:
-            return []
-
-        ceiling = int(limit * 1_000_000)
-        over = [
-            session
-            for session in list(self.sessions.values())
-            if session.sink.buffered_bytes > ceiling
-        ]
+        over = [session for session in list(self.sessions.values()) if self._past_ceiling(session)]
         for session in over:
             self.sessions.pop(session.guild_id, None)
         return over
+
+    def ceiling(self, session: RecordingSession) -> tuple[float, str]:
+        """The limit that ends this recording, and the setting that named it.
+
+        A recording with somewhere to spill is bounded by the disk it is
+        spilling to. One without is bounded by memory, as every recording was
+        before there was anywhere else for the audio to go.
+        """
+        if session.sink.spills:
+            return self.config.max_disk_mb, "MAX_DISK_MB"
+        return self.config.max_buffer_mb, "MAX_BUFFER_MB"
+
+    def _past_ceiling(self, session: RecordingSession) -> bool:
+        limit, _setting = self.ceiling(session)
+        if limit <= 0:
+            return False
+        # Both halves, because a recording that spilled holds most of itself on
+        # disk and measuring only what is resident would never fire again.
+        return session.sink.total_bytes > int(limit * 1_000_000)
 
     def connection_lost(self, session: RecordingSession) -> bool:
         """Whether a session's voice client reports itself no longer connected.
@@ -529,19 +554,21 @@ class StenosBot(discord.Bot):  # type: ignore[misc]
         and a message naming the setting that decided it.
         """
         for session in await self.over_budget():
-            held = session.sink.buffered_bytes / 1_000_000
+            limit, setting = self.ceiling(session)
+            held = session.sink.total_bytes / 1_000_000
             log.warning(
-                "Recording in %s reached the buffer limit at %.1f MB, stopping it.",
+                "Recording in %s reached the %s limit at %.1f MB, stopping it.",
                 session.channel_name,
+                setting,
                 held,
             )
             await self.finish_and_report(
                 session,
                 stopped=(
-                    f"Recording stopped at the {self.config.max_buffer_mb:g} MB buffer "
-                    f"limit after {format_duration(session.elapsed())}"
+                    f"Recording stopped at the {limit:g} MB limit after "
+                    f"{format_duration(session.elapsed())}"
                 ),
-                closing="Raise MAX_BUFFER_MB to record for longer.",
+                closing=f"Raise {setting} to record for longer.",
             )
 
     async def finish_all(self, *, stopped: str, closing: str = "") -> None:
@@ -803,18 +830,23 @@ def register_commands(bot: StenosBot, guild_ids: list[int] | None = None) -> Any
             )
             return
 
+        started_at = datetime.now(UTC)
+        channel_name = str(channel.name)
         sink = TimestampedSink(
             segment_gap=bot.config.segment_gap,
             max_segment=bot.config.max_segment,
+            storage=open_storage(bot.config, channel_name, started_at),
+            spill_above=int(bot.config.max_buffer_mb * 1_000_000),
         )
         session = RecordingSession(
             guild_id=int(guild_id),
             channel_id=int(channel.id),
-            channel_name=str(channel.name),
+            channel_name=channel_name,
             text_channel=ctx.channel,
             voice_client=voice_client,
             sink=sink,
             guild=getattr(ctx, "guild", None),
+            started_at=started_at,
         )
         session.remember_all(getattr(channel, "members", []))
 
@@ -987,6 +1019,28 @@ def _repaired(applied: bool) -> str:
 def _limit(value: float, unit: str) -> str:
     """A ceiling that zero switches off, rendered so the report says which."""
     return f"{value:g}{unit}" if value > 0 else "none"
+
+
+def open_storage(config: Config, channel_name: str, started_at: datetime) -> SpillWriter | None:
+    """Somewhere for this recording's audio to go if it outgrows memory.
+
+    Handed to the sink at the start rather than made when the ceiling is
+    reached, so the manifest carries the channel and the moment the call began
+    rather than the moment memory ran out. Nothing is created until something
+    actually spills.
+
+    A ceiling of zero means the caller wants the whole call resident, so there
+    is nowhere to spill and nothing to open.
+    """
+    if config.max_buffer_mb <= 0:
+        return None
+    stem = transcript_stem(channel_name, started_at)
+    return SpillWriter(
+        config.output_dir / f"{stem}{SPILL_SUFFIX}",
+        channel=channel_name,
+        started_at=started_at,
+        sample_rate=TARGET_SAMPLE_RATE,
+    )
 
 
 def output_state(directory: Path) -> str:

@@ -18,6 +18,7 @@ from stenos import bot as bot_module
 from stenos import upstream
 from stenos.bot import build_bot
 from stenos.config import Config
+from stenos.spill import partial_recordings
 from stenos.transcribe import BackendUnavailableError, MockBackend
 
 
@@ -805,14 +806,19 @@ def test_the_finished_callback_is_not_a_coroutine() -> None:
     assert not inspect.iscoroutinefunction(bot_module._on_recording_finished)
 
 
-# The buffer ceiling. A recording that runs until the host is out of memory
-# takes the whole call with it, so one that outgrows the limit is stopped and
-# what it captured is written out.
+# The ceilings. A recording that runs until the host is out of memory takes the
+# whole call with it. Past MAX_BUFFER_MB it continues on disk instead, and past
+# MAX_DISK_MB it stops and what it captured is written out.
 
 
 async def recording_at(tmp_path: Path, *, held_mb: float, limit_mb: float) -> tuple[Any, Any]:
-    """A started recording holding roughly held_mb, under a limit of limit_mb."""
-    bot = make_bot(tmp_path, max_buffer_mb=limit_mb)
+    """A started recording holding roughly held_mb, under a limit of limit_mb.
+
+    Both ceilings are set, because the one that ends a recording is the disk.
+    Left at its default the recording would spill and carry on, which is the
+    behaviour its own tests cover.
+    """
+    bot = make_bot(tmp_path, max_buffer_mb=limit_mb, max_disk_mb=limit_mb)
     channel = FakeVoiceChannel(2, "general", [])
     author = FakeMember(11, "Alpha", channel=channel)
     channel.members = [author]
@@ -848,11 +854,13 @@ async def test_a_recording_over_the_limit_is_stopped_and_says_why(
 
     assert 1 not in bot.sessions
     (message, _attachment) = session.text_channel.sent[0]
-    assert "buffer limit" in message
-    assert "0.1 MB" in message
+    # Named by the setting rather than by the word "buffer", since a recording
+    # with somewhere to spill is bounded by the disk instead and stops with the
+    # same sentence naming the other one.
+    assert "0.1 MB limit" in message
     # What it captured is still transcribed and still reported.
     assert "Transcribed" in message
-    assert "MAX_BUFFER_MB" in message
+    assert "MAX_DISK_MB" in message
 
 
 async def test_a_zero_limit_never_stops_a_recording(tmp_path: Path) -> None:
@@ -895,9 +903,7 @@ async def test_stopping_by_hand_and_by_the_limit_produce_the_same_report(
 
     tail = "Transcribed"
     assert (
-        automatic[automatic.index(tail) :].removesuffix(
-            " Raise MAX_BUFFER_MB to record for longer."
-        )
+        automatic[automatic.index(tail) :].removesuffix(" Raise MAX_DISK_MB to record for longer.")
         == requested[requested.index(tail) :]
     )
 
@@ -1361,3 +1367,60 @@ def test_the_route_a_platform_without_signal_handlers_takes(
     assert bot.sessions == {}
     assert "shutting down" in session.text_channel.sent[0][0]
     assert session.text_channel.sent[0][1] is not None  # The transcript.
+
+
+# Spilling, end to end. The ceiling used to end a recording because there was
+# nowhere for the audio to go; now it moves and the call carries on.
+
+
+async def test_a_recording_past_the_memory_ceiling_continues_on_disk(tmp_path: Path) -> None:
+    bot, session = await recording_at(tmp_path, held_mb=0.5, limit_mb=1024.0)
+    session.sink._spill_above = 1  # Cross it without holding a gigabyte first.
+    session.sink.cleanup()
+
+    assert session.sink.spilling is True
+    assert session.sink.buffered_bytes == 0
+    assert session.sink.total_bytes > 0
+    # Still recording, because the disk ceiling is what ends a call now.
+    assert 1 in bot.sessions
+    assert partial_recordings(tmp_path) != []
+
+
+async def test_a_spilled_recording_transcribes_and_cleans_up_after_itself(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(bot_module, "load_backend", lambda *a, **k: MockBackend(texts=["a line"]))
+    bot, _channel, session = await recording_with_self(tmp_path)
+    session.sink._spill_above = 1
+    feed(session)
+    session.sink.cleanup()
+    assert session.sink.spilling is True
+
+    await command(bot, "stop")(FakeContext(1, FakeMember(11, "Alpha")))
+
+    assert session.sink.segments()
+    # The audio was read back off disk to transcribe it, and the directory is
+    # gone now that the transcript is written.
+    assert partial_recordings(tmp_path) == []
+    assert list(tmp_path.glob("*.txt"))
+
+
+async def test_a_recording_told_to_keep_everything_resident_has_nowhere_to_spill(
+    tmp_path: Path,
+) -> None:
+    # MAX_BUFFER_MB of zero asks for the whole call in memory, so there is no
+    # ceiling to cross and nothing to open.
+    bot, _channel, session = await recording_with_self(tmp_path, max_buffer_mb=0.0)
+
+    assert session.sink.storage is None
+    assert session.sink.spills is False
+    assert bot.ceiling(session)[1] == "MAX_BUFFER_MB"
+
+
+async def test_the_ceiling_that_ends_a_recording_is_the_disk_when_it_can_spill(
+    tmp_path: Path,
+) -> None:
+    bot, _channel, session = await recording_with_self(tmp_path)
+
+    assert session.sink.spills is True
+    assert bot.ceiling(session) == (bot.config.max_disk_mb, "MAX_DISK_MB")

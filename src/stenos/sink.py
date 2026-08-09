@@ -312,6 +312,11 @@ class TimestampedSink(Sink):
         self._spilling = False
 
     @property
+    def storage(self) -> SpillWriter | None:
+        """Where this recording's audio goes if it outgrows memory, if anywhere."""
+        return self._storage
+
+    @property
     def spills(self) -> bool:
         """Whether this recording can move audio to disk rather than stopping."""
         return self._storage is not None and self._spill_above > 0
