@@ -254,3 +254,21 @@ def test_the_documented_check_output_lists_the_fields_it_really_prints() -> None
 
     assert sample is not None, "the troubleshooting page has no --check sample"
     assert reported_fields(sample.group(1)) == reported_fields(real)
+
+
+def test_the_helper_agrees_with_every_count_checked_here() -> None:
+    # Each count above fails the commit that lets it drift, and
+    # scripts/refresh_counts.py is what a contributor runs to fix that. The two
+    # measure the same things separately, so a change to one and not the other
+    # would leave the helper reporting success on a README this file rejects.
+    # Running it here means that disagreement fails rather than wastes an
+    # afternoon.
+    completed = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "refresh_counts.py"), "--check"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
