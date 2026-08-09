@@ -1,6 +1,6 @@
 [project]
 name = "stenos"
-version = "0.2.3.33"
+version = "0.2.3.34"
 description = "Discord voice recorder producing timestamped, speaker-attributed transcripts with local inference"
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
@@ -107,6 +107,9 @@ select = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["S101"]
+# T20 exists to keep stray debugging out of the package. A maintenance script
+# reports to stdout because that is the whole of its interface.
+"scripts/*" = ["T201"]
 
 [tool.mypy]
 # The target version deliberately follows the running interpreter. numpy ships
