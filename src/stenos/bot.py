@@ -7,6 +7,7 @@ import asyncio
 import contextlib
 import logging
 import platform
+import signal
 import time
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -344,6 +345,7 @@ class StenosBot(discord.Bot):  # type: ignore[misc]
         super().__init__(intents=intents, **options)
         self.config = config
         self.sessions: dict[int, RecordingSession] = {}
+        self._shutting_down = False
 
     @tasks.loop(seconds=BUFFER_CHECK_SECONDS)
     async def _watch_recordings(self) -> None:
@@ -362,12 +364,47 @@ class StenosBot(discord.Bot):  # type: ignore[misc]
             except Exception:
                 log.exception("A recording check failed, and will run again shortly")
 
+    def watch_for_shutdown(self) -> bool:
+        """Ask to be told about a termination signal, rather than stopped by it.
+
+        py-cord binds both signals to the event loop's stop, which returns from
+        run and cancels every task, so the close that would finish a recording
+        is cancelled part way through. Bound here instead, after py-cord has
+        bound them, because a later binding replaces an earlier one.
+
+        Windows has no signal handlers on an event loop and says so. Ctrl+C
+        there raises into the loop and reaches close by its own route, and
+        there is no SIGTERM to catch.
+        """
+        loop = asyncio.get_running_loop()
+        try:
+            for received in (signal.SIGINT, signal.SIGTERM):
+                loop.add_signal_handler(received, self._begin_shutdown, received)
+        except (NotImplementedError, RuntimeError, AttributeError, ValueError):
+            log.debug("This platform does not take signal handlers on the event loop.")
+            return False
+        return True
+
+    def _begin_shutdown(self, received: signal.Signals) -> None:
+        """Close on the loop, once, however many signals arrive.
+
+        A second signal while a recording is still transcribing would otherwise
+        start a second close and transcribe it twice.
+        """
+        if self._shutting_down:
+            log.warning("Already shutting down. %s ignored.", received.name)
+            return
+        self._shutting_down = True
+        log.info("%s received. Finishing any recording before exit.", received.name)
+        self.loop.create_task(self.close())
+
     async def on_ready(self) -> None:
         log.info("Connected as %s", self.user)
         # on_ready fires again after every reconnect, and starting a loop that
         # is already running raises.
         if not self._watch_recordings.is_running():
             self._watch_recordings.start()
+        self.watch_for_shutdown()
 
     async def over_budget(self) -> list[RecordingSession]:
         """Sessions holding more audio than the configured ceiling allows.

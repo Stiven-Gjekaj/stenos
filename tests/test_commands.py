@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import signal
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -1235,3 +1236,64 @@ async def test_closing_stops_the_watchdog(tmp_path: Path) -> None:
     await asyncio.sleep(0)
 
     assert not bot._watch_recordings.is_running()
+
+
+async def test_a_termination_signal_finishes_the_recording(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # py-cord binds both signals to the loop's stop, which returns from run and
+    # cancels every task, so the close that would finish a recording is
+    # cancelled part way through. Bound after py-cord's, a later binding wins.
+    monkeypatch.setattr(bot_module, "load_backend", lambda *a, **k: MockBackend(texts=["a line"]))
+    bot, _channel, session = await recording_with_self(tmp_path)
+    feed(session)
+
+    assert bot.watch_for_shutdown()
+    signal.raise_signal(signal.SIGTERM)
+    # The handler schedules the close, and transcription runs on a thread, so
+    # the loop has to actually run rather than merely yield.
+    for _ in range(200):
+        await asyncio.sleep(0.01)
+        if session.text_channel.sent:
+            break
+
+    assert bot.sessions == {}
+    assert "shutting down" in session.text_channel.sent[0][0]
+
+
+async def test_a_second_signal_does_not_start_a_second_shutdown(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Transcription takes minutes. Somebody pressing Ctrl+C again during it
+    # would otherwise start a second close and transcribe the call twice.
+    monkeypatch.setattr(bot_module, "load_backend", lambda *a, **k: MockBackend())
+    bot, _channel, session = await recording_with_self(tmp_path)
+    feed(session)
+    assert bot.watch_for_shutdown()
+
+    with caplog.at_level(logging.WARNING, logger="stenos"):
+        signal.raise_signal(signal.SIGINT)
+        signal.raise_signal(signal.SIGINT)
+        for _ in range(200):
+            await asyncio.sleep(0.01)
+            if session.text_channel.sent:
+                break
+
+    assert len(session.text_channel.sent) == 1
+    assert any("Already shutting down" in message for message in caplog.messages)
+
+
+async def test_a_platform_without_loop_signal_handlers_says_so(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Windows has none. Ctrl+C there raises into the loop and reaches close by
+    # its own route, and there is no SIGTERM to catch.
+    bot = make_bot(tmp_path)
+    loop = asyncio.get_running_loop()
+
+    def refuse(*args: object) -> None:
+        raise NotImplementedError
+
+    monkeypatch.setattr(loop, "add_signal_handler", refuse)
+
+    assert bot.watch_for_shutdown() is False

@@ -20,6 +20,16 @@ sections below are therefore headed by the series rather than by one version.
   through the same path the stop command uses, stopping the watchdog first so
   it cannot fire against sessions being torn down underneath it.
 
+  A termination signal reaches that path now. py-cord binds both SIGINT and
+  SIGTERM to the event loop's stop, which returns from `run` and cancels every
+  task, so the close that would finish a recording was cancelled part way
+  through and the call was lost anyway. They are bound after py-cord binds
+  them, since a later binding replaces an earlier one, and a second signal
+  arriving while a recording is still transcribing is ignored rather than
+  starting a second shutdown that transcribes it twice. Windows takes no signal
+  handlers on an event loop and says so, where Ctrl+C reaches close by its own
+  route and there is no SIGTERM to catch.
+
 - **Two threads retiring a segment at once started two reducers.** The router
   retires a segment that closed and `cleanup` retires whatever was still open,
   from different threads, and the check for an existing worker was not guarded.
