@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import signal
+import sys
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -1238,6 +1239,17 @@ async def test_closing_stops_the_watchdog(tmp_path: Path) -> None:
     assert not bot._watch_recordings.is_running()
 
 
+needs_loop_signals = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason=(
+        "an event loop takes no signal handlers on Windows, so there is nothing "
+        "to bind, and raising SIGTERM there runs the default handler and ends "
+        "the process. The refusal itself is covered below."
+    ),
+)
+
+
+@needs_loop_signals
 async def test_a_termination_signal_finishes_the_recording(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1261,6 +1273,7 @@ async def test_a_termination_signal_finishes_the_recording(
     assert "shutting down" in session.text_channel.sent[0][0]
 
 
+@needs_loop_signals
 async def test_a_second_signal_does_not_start_a_second_shutdown(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
