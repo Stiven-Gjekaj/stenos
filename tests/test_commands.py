@@ -1027,3 +1027,57 @@ async def test_a_recording_that_cannot_be_announced_does_not_start(tmp_path: Pat
     assert bot.sessions == {}, "a recording nobody was told about was left running"
     assert channel.voice_client.recording is False
     assert channel.voice_client.disconnected is True
+
+
+async def test_status_reports_what_the_recording_holds(tmp_path: Path) -> None:
+    # Nothing surfaced the buffer before, so the first sign of approaching the
+    # ceiling was the recording stopping itself at it.
+    bot, _channel, session = await recording_with_self(tmp_path, max_buffer_mb=512.0)
+    feed(session, packets=600)
+    ctx = FakeContext(1, FakeMember(11, "Alpha"))
+
+    await command(bot, "status")(ctx)
+
+    reply = ctx.responses[0][0]
+    assert "holding" in reply
+    assert "of 512 MB" in reply
+    # A megabyte of speech is 1,000,000 bytes held, not 1,048,576, which is the
+    # same unit MAX_BUFFER_MB is measured in.
+    held = session.sink.buffered_bytes / 1_000_000
+    assert f"{held:.1f} MB" in reply
+
+
+async def test_status_says_when_no_buffer_limit_is_set(tmp_path: Path) -> None:
+    bot, _channel, session = await recording_with_self(tmp_path, max_buffer_mb=0.0)
+    feed(session)
+    ctx = FakeContext(1, FakeMember(11, "Alpha"))
+
+    await command(bot, "status")(ctx)
+
+    # "of 0 MB" would read as a ceiling of nothing rather than no ceiling.
+    assert "with no limit set" in ctx.responses[0][0]
+
+
+async def test_status_reports_packets_nobody_could_be_matched_to(tmp_path: Path) -> None:
+    # The sink has always counted these rather than guessing an attribution,
+    # and nothing ever showed the count.
+    bot, _channel, session = await recording_with_self(tmp_path)
+    session.sink.write(SPEECH, None)
+    session.sink.write(SPEECH, None)
+    ctx = FakeContext(1, FakeMember(11, "Alpha"))
+
+    await command(bot, "status")(ctx)
+
+    assert "2 packets arrived before their speaker was known" in ctx.responses[0][0]
+
+
+async def test_status_stays_quiet_about_attribution_when_there_is_nothing_to_say(
+    tmp_path: Path,
+) -> None:
+    bot, _channel, session = await recording_with_self(tmp_path)
+    feed(session)
+    ctx = FakeContext(1, FakeMember(11, "Alpha"))
+
+    await command(bot, "status")(ctx)
+
+    assert "not attributed" not in ctx.responses[0][0]

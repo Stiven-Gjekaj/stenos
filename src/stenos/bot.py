@@ -777,9 +777,23 @@ def register_commands(bot: StenosBot, guild_ids: list[int] | None = None) -> Any
             if not dave.receives_audio:
                 note = f" No audio has arrived yet: {dave.summary}."
 
+        # What it holds, against what it is allowed to hold. Nothing surfaced
+        # this before, so the first sign of approaching the ceiling was the
+        # recording stopping itself at it.
+        held = session.sink.buffered_bytes / 1_000_000
+        limit = bot.config.max_buffer_mb
+        ceiling = f"of {limit:g} MB" if limit > 0 else "with no limit set"
+        unattributed = session.sink.unattributed_packets
+        if unattributed:
+            note += (
+                f" {unattributed} packets arrived before their speaker was known "
+                f"and were not attributed to anyone."
+            )
+
         await ctx.respond(
             f"Recording {session.channel_name} for {format_duration(session.elapsed())}. "
-            f"{len(session.sink.user_ids)} participants have spoken so far.{note}",
+            f"{len(session.sink.user_ids)} participants have spoken so far, "
+            f"holding {held:.1f} MB {ceiling}.{note}",
             ephemeral=True,
         )
 

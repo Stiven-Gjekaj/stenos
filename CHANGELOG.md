@@ -26,6 +26,15 @@ sections below are therefore headed by the series rather than by one version.
   comparing models on the same recording, was unreachable. The buffers are now
   released either way, since keeping means writing.
 
+- **`/record status` reports what the recording holds.** It gave the channel,
+  the elapsed time, and how many people had spoken, and said nothing about
+  memory, so the first sign of approaching `MAX_BUFFER_MB` was the recording
+  stopping itself at it. It now reports the buffer against the ceiling, saying
+  that no limit is set rather than printing a ceiling of zero, and reports the
+  packets that arrived before their speaker was known. The sink has always
+  counted those rather than guessing an attribution, and nothing showed the
+  count.
+
 - **A schema version is written to the JSON sidecar.** `build_sidecar` now carries
   a `version: 1` field at the top level of the payload so downstream tools can
   identify the sidecar structure without probing keys.
