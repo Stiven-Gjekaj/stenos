@@ -226,3 +226,31 @@ def test_the_architecture_page_names_things_that_exist() -> None:
     missing = sorted(named - known)
 
     assert not missing, f"named on the architecture page and absent from the package: {missing}"
+
+
+#: A line of the documented --check sample: a field name, then its value.
+_REPORT_FIELD = re.compile(r"^([a-z][a-z ]*[a-z])  +\S")
+
+
+def reported_fields(report: str) -> list[str]:
+    return [
+        match.group(1)
+        for line in report.splitlines()
+        if (match := _REPORT_FIELD.match(line)) is not None
+    ]
+
+
+def test_the_documented_check_output_lists_the_fields_it_really_prints() -> None:
+    # The sample on the troubleshooting page sat at the 0.1.2 output for two
+    # releases, missing the eight lines added since, which are the ones that
+    # page asks a reader to look at. Nothing noticed because nothing compared
+    # it with the command.
+    from stenos.bot import describe_environment
+    from stenos.config import Config
+
+    real = describe_environment(Config(discord_token="x", output_dir=ROOT / "transcripts"))
+    page = (ROOT / "docs" / "troubleshooting.md").read_text(encoding="utf-8")
+    sample = re.search(r"^stenos \d[^\n]*\n(.*?)^```", page, re.MULTILINE | re.DOTALL)
+
+    assert sample is not None, "the troubleshooting page has no --check sample"
+    assert reported_fields(sample.group(1)) == reported_fields(real)

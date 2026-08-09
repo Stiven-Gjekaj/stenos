@@ -124,6 +124,12 @@ sections below are therefore headed by the series rather than by one version.
   invisible. A finished recording logs it, and takes it the same way the
   skipped count is taken so the next recording does not claim it too.
 
+- **The documented `--check` sample is checked against the command.** It sat at
+  the 0.1.2 output for two releases, missing the eight lines added since, which
+  are the ones that page asks a reader to look at, and nothing noticed because
+  nothing compared the two. A test now reads the field names out of both and
+  refuses a sample that has stopped describing the command.
+
 ### Added
 
 - **Audio can be written to disk.** `write_speaker_wav` lays one participant's
