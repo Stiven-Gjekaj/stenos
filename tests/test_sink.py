@@ -6,6 +6,7 @@ import sys
 import threading
 import time
 from collections.abc import Sequence
+from datetime import UTC, datetime
 from itertools import pairwise
 from pathlib import Path
 from unittest import mock
@@ -26,6 +27,7 @@ from stenos.sink import (
     TimestampedSink,
     opus_library_candidates,
 )
+from stenos.spill import SpillWriter
 
 #: One Discord voice frame is 20 ms of 48 kHz stereo signed 16 bit audio.
 FRAME_BYTES = BYTES_PER_SECOND // 50
@@ -586,3 +588,127 @@ def test_a_frozen_build_looks_inside_its_own_payload_first(tmp_path: Path) -> No
 
     assert candidates[0].startswith(str(tmp_path))
     assert any("discord" in candidate for candidate in candidates)
+
+
+# A recording is held in memory and written once at the end, which stops being
+# possible on a host whose memory the call outgrows. Past a ceiling it moves to
+# disk instead of the recording ending, which is what used to happen.
+
+
+def store_for(tmp_path: Path) -> SpillWriter:
+    return SpillWriter(
+        tmp_path / "call.partial",
+        channel="general",
+        started_at=datetime(2026, 8, 9, tzinfo=UTC),
+        sample_rate=TARGET_SAMPLE_RATE,
+    )
+
+
+def spilling_sink(
+    packets: Sequence[tuple[float, int]],
+    store: SpillWriter,
+    *,
+    spill_above: int,
+) -> TimestampedSink:
+    sink = TimestampedSink(
+        segment_gap=0.4,
+        clock=ScriptedClock([timestamp for timestamp, _ in packets]),
+        storage=store,
+        spill_above=spill_above,
+    )
+    for _, user in packets:
+        sink.write(FRAME, user)
+    return sink
+
+
+def test_a_recording_under_the_ceiling_never_touches_the_disk(tmp_path: Path) -> None:
+    store = store_for(tmp_path)
+    sink = spilling_sink([(0.0, 1), (0.02, 1), (5.0, 1)], store, spill_above=10_000_000)
+
+    sink.cleanup()
+
+    assert sink.spilling is False
+    assert all(segment.spill is None for segment in sink.segments())
+    assert sink.buffered_bytes == sink.total_bytes
+
+
+def test_crossing_the_ceiling_moves_what_is_already_settled(tmp_path: Path) -> None:
+    # Not only the segment that crossed it. The point is to free the memory the
+    # recording is already holding, which is nearly all in the earlier ones.
+    store = store_for(tmp_path)
+    sink = spilling_sink([(0.0, 1), (5.0, 1), (10.0, 1), (15.0, 1)], store, spill_above=1)
+
+    sink.cleanup()
+
+    assert sink.spilling is True
+    assert all(segment.spill is not None for segment in sink.segments())
+
+
+def test_spilling_frees_the_memory_and_keeps_the_audio(tmp_path: Path) -> None:
+    store = store_for(tmp_path)
+    sink = spilling_sink([(0.0, 1), (5.0, 1), (10.0, 1)], store, spill_above=1)
+    sink.cleanup()
+
+    assert sink.buffered_bytes == 0
+    assert sink.total_bytes > 0
+    # The audio is still readable, which is the only thing that matters.
+    assert all(segment.snapshot()[0] for segment in sink.segments())
+
+
+def test_a_sink_with_nowhere_to_spill_keeps_holding_it(tmp_path: Path) -> None:
+    # The behaviour every existing recording has, and the fallback when the
+    # output directory cannot be written to.
+    sink = record([(0.0, 1), (5.0, 1), (10.0, 1)], segment_gap=0.4)
+
+    sink.cleanup()
+
+    assert sink.spills is False
+    assert sink.spilling is False
+    assert sink.buffered_bytes == sink.total_bytes > 0
+
+
+def test_a_disk_that_refuses_the_write_costs_memory_and_not_the_recording(
+    tmp_path: Path,
+) -> None:
+    # The reducer thread runs for the whole call. An exception escaping it ends
+    # the thread, after which nothing reduces or spills any later segment, so
+    # the failure has to stop at the segment it happened to.
+    store = store_for(tmp_path)
+    store.close()  # Every append now raises.
+    sink = spilling_sink([(0.0, 1), (5.0, 1), (10.0, 1)], store, spill_above=1)
+
+    sink.cleanup()
+
+    assert [segment.spill for segment in sink.segments()] == [None, None, None]
+    assert sink.total_bytes > 0
+    assert all(segment.sample_rate == TARGET_SAMPLE_RATE for segment in sink.segments())
+
+
+def test_a_segment_still_being_written_to_is_left_in_memory(tmp_path: Path) -> None:
+    # extend appends to the buffer spilling empties, so moving an open segment
+    # would write out what it holds and then collect the rest of that speaker's
+    # sentence into a buffer nothing ever reads.
+    store = store_for(tmp_path)
+    arrivals = [0.0, 5.0, 10.0, 15.0, 15.02]
+    sink = TimestampedSink(
+        segment_gap=0.4,
+        clock=ScriptedClock(arrivals),
+        storage=store,
+        spill_above=1,
+    )
+    for _ in arrivals[:-1]:
+        sink.write(FRAME, 1)
+    # The reducer runs on its own thread, so the ceiling is crossed there.
+    for _ in range(200):
+        if sink.spilling:
+            break
+        time.sleep(0.01)
+
+    assert sink.spilling is True
+    latest = sink.segments()[-1]
+    assert latest.spill is None
+    before = latest.held()
+
+    sink.write(FRAME, 1)
+
+    assert latest.held() > before

@@ -51,6 +51,7 @@ from .audio import (
     Segment,
 )
 from .config import bundle_directory
+from .spill import SpillWriter
 
 __all__ = [
     "BYTES_PER_SECOND",
@@ -284,6 +285,8 @@ class TimestampedSink(Sink):
         max_segment: float = DEFAULT_MAX_SEGMENT,
         clock: Callable[[], float] = time.perf_counter,
         filters: dict[str, Any] | None = None,
+        storage: SpillWriter | None = None,
+        spill_above: int = 0,
     ) -> None:
         super().__init__(filters=filters)
         if segment_gap < 0:
@@ -304,6 +307,60 @@ class TimestampedSink(Sink):
         self._unattributed = 0
         self._closed: queue.SimpleQueue[Segment | None] = queue.SimpleQueue()
         self._reducer: threading.Thread | None = None
+        self._storage = storage
+        self._spill_above = max(0, spill_above)
+        self._spilling = False
+
+    @property
+    def spills(self) -> bool:
+        """Whether this recording can move audio to disk rather than stopping."""
+        return self._storage is not None and self._spill_above > 0
+
+    @property
+    def spilling(self) -> bool:
+        """Whether it already has."""
+        return self._spilling
+
+    def _settled(self) -> list[Segment]:
+        """Segments that can no longer grow, so their audio is final.
+
+        Identified rather than compared. Two segments holding the same audio
+        from the same speaker at the same offset are equal by value, and one of
+        them may still be open.
+        """
+        with self._lock:
+            open_now = {id(segment) for segment in self._open.values()}
+            return [segment for segment in self._segments if id(segment) not in open_now]
+
+    def _relieve(self, segment: Segment) -> None:
+        """Move audio to disk once more is held than the ceiling allows.
+
+        Entered once and never left. A recording that crossed the mark will
+        cross it again the moment anything is held back, and alternating would
+        leave half a call in each place for no gain.
+
+        Only settled segments move. ``extend`` appends to the buffer this
+        empties, so spilling one that is still open would write the audio out
+        and then go on collecting into a buffer nothing reads.
+        """
+        if not self.spills or self._storage is None:
+            return
+        if self._spilling:
+            segment.spill_to(self._storage)
+            return
+        held = self.buffered_bytes
+        if held <= self._spill_above:
+            return
+        self._spilling = True
+        log.info(
+            "Holding %.0f MB of audio, over the %.0f MB ceiling, so this recording "
+            "continues on disk in %s.",
+            held / 1_000_000,
+            self._spill_above / 1_000_000,
+            self._storage.directory,
+        )
+        for settled in self._settled():
+            settled.spill_to(self._storage)
 
     def _reduce_closed(self) -> None:
         """Drain closed segments, reducing each. Ends on the sentinel."""
@@ -317,6 +374,15 @@ class TimestampedSink(Sink):
                 # A segment that will not reduce is still transcribable at the
                 # rate it arrived at, so this costs memory rather than audio.
                 log.exception("Could not reduce a closed segment")
+            try:
+                self._relieve(segment)
+            except Exception:
+                # Guarded apart from the reduction above, and never allowed to
+                # end this worker: a recording that cannot reach the disk is
+                # still a recording, and the ceiling that ends it is measured
+                # elsewhere. Every later segment would otherwise stay resident
+                # with nothing left to reduce it either.
+                log.exception("Could not move a closed segment to disk")
 
     def _retire(self, segment: Segment) -> None:
         """Hand a segment that can no longer grow to the worker.
@@ -456,6 +522,18 @@ class TimestampedSink(Sink):
         # Each read under its own lock, and outside the sink's: a segment being
         # reduced while this runs would otherwise be measured mid-swap.
         return sum(segment.held() for segment in segments)
+
+    @property
+    def total_bytes(self) -> int:
+        """Audio this recording holds, in memory and on disk together.
+
+        What a ceiling meant to bound the whole recording measures, where
+        ``buffered_bytes`` measures only what has to fit in memory. The two are
+        the same number until something spills.
+        """
+        with self._lock:
+            segments = list(self._segments)
+        return sum(segment.length() for segment in segments)
 
     @property
     def packet_count(self) -> int:
