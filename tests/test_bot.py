@@ -5,6 +5,7 @@ No test opens a gateway or voice connection.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -294,4 +295,9 @@ def test_the_environment_report_says_when_it_cannot_write(tmp_path: Path) -> Non
     report = describe_environment(Config(discord_token="x", output_dir=blocker / "calls"))
 
     assert "CANNOT BE WRITTEN" in report
-    assert "NotADirectoryError" in report
+    # The report carries whatever the platform raised rather than a sentence of
+    # its own, and the platforms disagree: POSIX refuses a directory under a
+    # file as NotADirectoryError, Windows as FileExistsError. What has to hold
+    # everywhere is that the refusal names the error and says something.
+    refusal = re.search(r"CANNOT BE WRITTEN \((\w+Error): (\S.*)\)", report)
+    assert refusal is not None, report
