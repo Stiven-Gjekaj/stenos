@@ -58,6 +58,15 @@ sections below are therefore headed by the series rather than by one version.
   would have followed. The trailing partial sample is now discarded the way the
   trailing partial frame beside it always was.
 
+- **A second recording could overwrite the first.** A file name carries the
+  channel and the second the recording started, which two recordings can share:
+  one bot in two servers that both have a channel called `general`, both
+  started in the same second, is the ordinary case rather than a contrived one.
+  Writing a transcript truncates, so the second destroyed the first and said
+  nothing. A name already taken now gains a counter, and both files take it so
+  a sidecar always names its own transcript. The check is not atomic, which
+  leaves an instant rather than a whole second.
+
 ### Added
 
 - **Audio can be written to disk.** `write_speaker_wav` lays one participant's

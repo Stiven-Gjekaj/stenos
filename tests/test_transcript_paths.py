@@ -147,3 +147,38 @@ def test_a_hostile_channel_name_produces_a_writable_path(tmp_path: Path) -> None
     transcript.write_text("line", encoding="utf-8")
 
     assert transcript.read_text(encoding="utf-8") == "line"
+
+
+def test_a_second_recording_does_not_overwrite_the_first(tmp_path: Path) -> None:
+    # A stem carries the channel and the second it started. One bot in two
+    # servers that both have a channel called general, both started in the same
+    # second, share it, and writing a transcript truncates.
+    first = transcript_paths(tmp_path, "general", RECORDED_AT)
+    first[0].write_text("the first recording", encoding="utf-8")
+    first[1].write_text("{}", encoding="utf-8")
+
+    second = transcript_paths(tmp_path, "general", RECORDED_AT)
+
+    assert second[0] != first[0]
+    assert second[1] != first[1]
+    # The pair stays together, so a sidecar always names its own transcript.
+    assert second[0].stem == second[1].stem
+    assert first[0].read_text(encoding="utf-8") == "the first recording"
+
+
+def test_a_free_name_takes_no_counter(tmp_path: Path) -> None:
+    transcript, sidecar = transcript_paths(tmp_path, "general", RECORDED_AT)
+
+    assert transcript.name.endswith("Z.txt")
+    assert sidecar.name.endswith("Z.json")
+
+
+def test_a_half_written_pair_is_still_stepped_over(tmp_path: Path) -> None:
+    # Only the sidecar exists, because writing the transcript failed. Reusing
+    # the stem would leave a sidecar describing a different recording.
+    taken = transcript_paths(tmp_path, "general", RECORDED_AT)
+    taken[1].write_text("{}", encoding="utf-8")
+
+    transcript, _sidecar = transcript_paths(tmp_path, "general", RECORDED_AT)
+
+    assert transcript != taken[0]

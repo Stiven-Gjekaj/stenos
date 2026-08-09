@@ -108,9 +108,31 @@ def transcript_paths(
     output_dir: Path,
     channel_name: str,
     recorded_at: datetime,
+    *,
+    limit: int = 100,
 ) -> tuple[Path, Path]:
-    """Return the transcript and sidecar paths for a recording."""
+    """Return the transcript and sidecar paths for a recording.
+
+    A stem carries the channel name and the second the recording started, which
+    two recordings can share: one bot in two servers that both have a channel
+    called ``general``, both started in the same second, is the ordinary case.
+    Writing a transcript truncates, so the second recording used to destroy the
+    first without saying anything.
+
+    A stem already on disk therefore gains a counter. Both files take it, so
+    the pair stays together. The check is not atomic, and two recordings
+    finishing in the same instant can still choose the same name, which is a
+    far smaller window than sharing a second.
+    """
     stem = transcript_stem(channel_name, recorded_at)
+    for suffix in ("", *(f"-{index}" for index in range(2, limit + 1))):
+        transcript = output_dir / f"{stem}{suffix}.txt"
+        sidecar = output_dir / f"{stem}{suffix}.json"
+        if not transcript.exists() and not sidecar.exists():
+            return transcript, sidecar
+
+    # Refusing here would lose the recording that is already transcribed, and
+    # a hundred recordings of one channel in one second is not a real call.
     return output_dir / f"{stem}.txt", output_dir / f"{stem}.json"
 
 
