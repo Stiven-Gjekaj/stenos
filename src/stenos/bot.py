@@ -38,7 +38,6 @@ from .transcript import (
     sanitize_filename,
     split_hms,
     transcript_paths,
-    transcript_stem,
     write_sidecar,
     write_transcript,
 )
@@ -108,17 +107,20 @@ def save_audio(
     sink: TimestampedSink,
     names: Mapping[int, str],
     *,
-    output_dir: Path,
-    channel_name: str,
-    recorded_at: datetime,
+    transcript_path: Path,
 ) -> list[Path]:
     """Write each participant's audio beside the transcript, one file each.
 
     Named after the speaker as well as their identifier: the name is what makes
     a directory of these readable, and the identifier is what keeps two people
     called the same thing in separate files.
+
+    The stem comes from the transcript rather than being worked out again,
+    because a transcript whose name was already taken carries a counter. Built
+    separately, the audio would miss that counter, land on the previous
+    recording's files, and pair with the wrong transcript.
     """
-    stem = transcript_stem(channel_name, recorded_at)
+    stem = transcript_path.stem
     by_speaker: dict[int, list[Segment]] = {}
     for segment in sink.segments():
         by_speaker.setdefault(segment.user_id, []).append(segment)
@@ -134,7 +136,9 @@ def save_audio(
         )
         try:
             written.append(
-                write_speaker_wav(output_dir / f"{stem}-{speaker}-{user_id}.wav", segments)
+                write_speaker_wav(
+                    transcript_path.with_name(f"{stem}-{speaker}-{user_id}.wav"), segments
+                )
             )
         except Exception:
             # The transcript is the deliverable and it is already written. A
@@ -189,13 +193,7 @@ def run_pipeline(
 
     audio_paths: list[Path] = []
     if config.keep_audio:
-        audio_paths = save_audio(
-            sink,
-            names,
-            output_dir=config.output_dir,
-            channel_name=channel_name,
-            recorded_at=recorded_at,
-        )
+        audio_paths = save_audio(sink, names, transcript_path=transcript_path)
 
     # Always, now that keeping it means writing it out. Holding the buffers
     # instead did nothing: the session is dropped the moment the command that

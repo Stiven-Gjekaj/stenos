@@ -67,6 +67,11 @@ sections below are therefore headed by the series rather than by one version.
   a sidecar always names its own transcript. The check is not atomic, which
   leaves an instant rather than a whole second.
 
+  The audio files that go with it work the stem out from the transcript rather
+  than building it again, or the counter above would apply to one and not the
+  other: the second recording's audio would land on the first recording's files
+  and pair with a transcript that was not its own.
+
 ### Added
 
 - **Audio can be written to disk.** `write_speaker_wav` lays one participant's

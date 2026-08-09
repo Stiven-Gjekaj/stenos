@@ -347,3 +347,29 @@ def test_an_audio_file_name_stays_inside_a_windows_path(tmp_path: Path) -> None:
     assert len(result.audio_paths) == 1
     assert len(result.audio_paths[0].name) <= 165, result.audio_paths[0].name
     assert result.audio_paths[0].is_file()
+
+
+def test_audio_takes_the_name_the_transcript_took(tmp_path: Path) -> None:
+    # A transcript whose name was already taken carries a counter. Audio built
+    # from the channel and the timestamp again would miss it, land on the
+    # previous recording's files, and pair with the wrong transcript.
+    written: list[tuple[Path, list[Path]]] = []
+    for _ in range(2):
+        sink = build_sink(speech(0.0, 11))
+        result = run_pipeline(
+            sink,
+            {11: "Alpha"},
+            channel_name="general",
+            config=config_for(tmp_path, keep_audio=True),
+            backend=MockBackend(),
+            recorded_at=RECORDED_AT,
+        )
+        written.append((result.transcript_path, result.audio_paths))
+
+    (first_text, first_audio), (second_text, second_audio) = written
+
+    assert first_text != second_text
+    assert first_audio != second_audio
+    assert len(list(tmp_path.glob("*.wav"))) == 2
+    for transcript, audio in written:
+        assert audio[0].name.startswith(transcript.stem)
