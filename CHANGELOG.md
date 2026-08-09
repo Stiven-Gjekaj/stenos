@@ -104,6 +104,13 @@ sections below are therefore headed by the series rather than by one version.
   the marker exists to prevent. It goes through the same normaliser as
   everything else now.
 
+- **`--check` now tries the output directory rather than naming it.** A
+  transcript is written once, at the end of transcription, so a directory that
+  will not take it costs the whole call and says so only afterwards. The report
+  creates the directory, writes a probe, and removes it, and says plainly when
+  it cannot. That is the command somebody runs before leaving a host
+  unattended.
+
 ### Added
 
 - **Audio can be written to disk.** `write_speaker_wav` lays one participant's

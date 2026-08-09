@@ -68,6 +68,7 @@ __all__ = [
     "format_duration",
     "log_progress",
     "main",
+    "output_state",
     "register_commands",
     "run_pipeline",
     "save_audio",
@@ -888,6 +889,26 @@ def _limit(value: float, unit: str) -> str:
     return f"{value:g}{unit}" if value > 0 else "none"
 
 
+def output_state(directory: Path) -> str:
+    """Whether a transcript could actually be written to this directory.
+
+    Tried rather than inspected, because the answer depends on the filesystem
+    and on who is running, and because a recording finds out at the end of a
+    call: the transcript is written once, after transcription, and a directory
+    that will not take it costs the whole recording. This is the one command
+    somebody runs before leaving a host unattended.
+    """
+    probe = directory / ".stenos-write-check"
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        probe.write_text("", encoding="utf-8")
+        probe.unlink()
+    except OSError as error:
+        reason = error.strerror or error
+        return f"{directory} CANNOT BE WRITTEN ({error.__class__.__name__}: {reason})"
+    return str(directory)
+
+
 def describe_environment(config: Config) -> str:
     """Report the resolved runtime configuration without connecting to Discord.
 
@@ -909,7 +930,7 @@ def describe_environment(config: Config) -> str:
         f"maximum segment  {config.max_segment}s",
         f"buffer limit     {_limit(config.max_buffer_mb, 'MB')}",
         f"disconnect grace {_limit(config.disconnect_grace, 's')}",
-        f"output directory {config.output_dir}",
+        f"output directory {output_state(config.output_dir)}",
         f"keep audio       {config.keep_audio}",
         f"opus loaded      {ensure_opus()}",
         f"encryption       {dave_support().summary}",

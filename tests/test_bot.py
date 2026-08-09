@@ -272,3 +272,26 @@ def test_a_recording_whose_lines_were_all_held_back_says_so() -> None:
     assert "0 speakers" not in message
     assert "none produced a usable line" in message
     assert "5 segments" in message
+
+
+def test_the_environment_report_says_the_output_directory_is_writable(tmp_path: Path) -> None:
+    report = describe_environment(Config(discord_token="x", output_dir=tmp_path / "calls"))
+
+    assert f"output directory {tmp_path / 'calls'}" in report
+    assert "CANNOT BE WRITTEN" not in report
+    # Tried rather than inspected, and the probe does not survive the attempt.
+    assert not list((tmp_path / "calls").iterdir())
+
+
+def test_the_environment_report_says_when_it_cannot_write(tmp_path: Path) -> None:
+    # A recording finds this out at the end of a call: the transcript is
+    # written once, after transcription, so a directory that will not take it
+    # costs the whole recording. --check is what somebody runs before leaving a
+    # host unattended.
+    blocker = tmp_path / "afile"
+    blocker.write_text("not a directory", encoding="utf-8")
+
+    report = describe_environment(Config(discord_token="x", output_dir=blocker / "calls"))
+
+    assert "CANNOT BE WRITTEN" in report
+    assert "NotADirectoryError" in report
