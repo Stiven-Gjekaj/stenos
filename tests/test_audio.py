@@ -6,6 +6,7 @@ import math
 import struct
 import threading
 import wave
+from datetime import UTC, datetime
 from pathlib import Path
 
 import numpy as np
@@ -32,6 +33,7 @@ from stenos.sink import (
     MONO_BYTES_PER_SECOND,
     Segment,
 )
+from stenos.spill import SpillWriter
 
 
 def stereo_pcm(left: list[int], right: list[int]) -> bytes:
@@ -431,3 +433,81 @@ def test_a_packet_of_odd_length_is_truncated_rather_than_refused(size: int) -> N
 
     assert len(result) % DISCORD_SAMPLE_WIDTH == 0
     assert len(result) == (size // (DISCORD_SAMPLE_WIDTH * DISCORD_CHANNELS)) * DISCORD_SAMPLE_WIDTH
+
+
+def spill_writer(directory: Path) -> SpillWriter:
+    return SpillWriter(
+        directory,
+        channel="general",
+        started_at=datetime(2026, 8, 9, tzinfo=UTC),
+        sample_rate=TARGET_SAMPLE_RATE,
+    )
+
+
+def test_a_spilled_segment_reads_back_the_audio_it_held(tmp_path: Path) -> None:
+    # The point of the whole exercise: every reader goes through snapshot, so
+    # neither transcription nor the WAV writer can tell where the audio lives.
+    segment = Segment(user_id=11, start=1.5, pcm=bytearray(b"\x00\x04" * 800))
+    segment.sample_rate = TARGET_SAMPLE_RATE
+    before = segment.snapshot()
+
+    assert segment.spill_to(spill_writer(tmp_path / "call.partial")) is True
+
+    assert segment.snapshot() == before
+
+
+def test_spilling_releases_the_memory_without_losing_the_length(tmp_path: Path) -> None:
+    segment = Segment(user_id=11, start=0.0, pcm=bytearray(b"\x00\x04" * 800))
+    segment.sample_rate = TARGET_SAMPLE_RATE
+    duration = segment.duration
+
+    segment.spill_to(spill_writer(tmp_path / "call.partial"))
+
+    # held is what the ceiling measures, and is the whole reason to spill.
+    assert segment.held() == 0
+    assert segment.length() == 1600
+    assert segment.duration == duration
+
+
+def test_a_spilled_segment_answers_silence_from_the_flag(tmp_path: Path) -> None:
+    quiet = Segment(user_id=11, start=0.0, pcm=bytearray(1600))
+    quiet.sample_rate = TARGET_SAMPLE_RATE
+    loud = Segment(user_id=22, start=0.0, pcm=bytearray(b"\x00\x04" * 800))
+    loud.sample_rate = TARGET_SAMPLE_RATE
+    store = spill_writer(tmp_path / "call.partial")
+
+    quiet.spill_to(store)
+    loud.spill_to(store)
+
+    assert quiet.is_silent() is True
+    assert loud.is_silent() is False
+
+
+def test_spilling_twice_leaves_the_first_copy_alone(tmp_path: Path) -> None:
+    segment = Segment(user_id=11, start=0.0, pcm=bytearray(b"\x00\x04" * 800))
+    segment.sample_rate = TARGET_SAMPLE_RATE
+    store = spill_writer(tmp_path / "call.partial")
+    segment.spill_to(store)
+    where = segment.spill
+
+    assert segment.spill_to(store) is False
+    assert segment.spill == where
+
+
+def test_an_empty_segment_has_nothing_to_spill(tmp_path: Path) -> None:
+    segment = Segment(user_id=11, start=0.0)
+
+    assert segment.spill_to(spill_writer(tmp_path / "call.partial")) is False
+    assert segment.spill is None
+
+
+def test_a_spilled_segment_still_converts_for_a_backend(tmp_path: Path) -> None:
+    # segment_to_audio is what every backend is handed, and it reads through
+    # snapshot, so this is the path a transcription actually takes.
+    segment = Segment(user_id=11, start=0.0, pcm=bytearray(b"\x00\x04" * 800))
+    segment.sample_rate = TARGET_SAMPLE_RATE
+    expected = segment_to_audio(segment)
+
+    segment.spill_to(spill_writer(tmp_path / "call.partial"))
+
+    assert np.array_equal(segment_to_audio(segment), expected)

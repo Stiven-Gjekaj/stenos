@@ -29,6 +29,8 @@ from pathlib import Path
 import numpy as np
 import numpy.typing as npt
 
+from .spill import Spilled, SpillWriter, read_audio
+
 __all__ = [
     "BYTES_PER_SECOND",
     "DISCORD_CHANNELS",
@@ -210,19 +212,30 @@ class Segment:
     arrived at until the segment can no longer grow, at which point ``reduce``
     drops it to the rate a model reads. ``sample_rate`` says which of the two is
     held, and is the only way to tell.
+
+    A segment that has been spilled holds its audio on disk rather than in
+    ``pcm``, and ``spill`` says where. Only a segment that can no longer grow is
+    ever spilled, because ``extend`` appends to ``pcm`` and would write into a
+    buffer nothing reads once the samples are on disk. Everything that reads the
+    audio goes through ``snapshot``, which is what makes the two cases one.
     """
 
     user_id: int
     start: float
     pcm: bytearray = field(default_factory=bytearray)
     sample_rate: int = DISCORD_SAMPLE_RATE
+    spill: Spilled | None = None
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
+
+    def _length(self) -> int:
+        """Bytes of audio this segment stands for. The caller holds the lock."""
+        return self.spill.length if self.spill is not None else len(self.pcm)
 
     @property
     def duration(self) -> float:
         """Length of the buffered audio in seconds, at whichever rate it holds."""
         with self._lock:
-            return len(self.pcm) / (self.sample_rate * DISCORD_SAMPLE_WIDTH)
+            return self._length() / (self.sample_rate * DISCORD_SAMPLE_WIDTH)
 
     @property
     def end(self) -> float:
@@ -259,12 +272,55 @@ class Segment:
         as nothing recognisable.
         """
         with self._lock:
-            return bytes(self.pcm), self.sample_rate
+            spilled, rate = self.spill, self.sample_rate
+            if spilled is None:
+                return bytes(self.pcm), rate
+        # Read outside the lock. The file is append only and this region was
+        # written before the reference to it existed, so nothing can change it,
+        # and holding the lock across a disk read would stall the watchdog
+        # measuring memory behind however long the disk takes.
+        return read_audio(spilled), rate
 
     def held(self) -> int:
-        """Bytes of audio currently buffered."""
+        """Bytes of audio currently in memory, which is none once it is spilled."""
         with self._lock:
             return len(self.pcm)
+
+    def length(self) -> int:
+        """Bytes of audio this segment holds, wherever it is."""
+        with self._lock:
+            return self._length()
+
+    def is_silent(self) -> bool:
+        """Whether every sample is zero.
+
+        Answered from the flag recorded when the audio was spilled, rather than
+        by reading it back. The caller that asks this asks it of every segment,
+        and only for a recording that turns out to be silent, which is the one
+        case where no read short circuits.
+        """
+        with self._lock:
+            if self.spill is not None:
+                return self.spill.silent
+            return not any(self.pcm)
+
+    def spill_to(self, writer: SpillWriter) -> bool:
+        """Move this segment's audio to disk, releasing the memory it held.
+
+        Returns whether anything moved, so a caller freeing memory can tell a
+        segment it emptied from one that was already empty or already spilled.
+
+        The write happens under the lock rather than beside it. A segment being
+        spilled is closed and nothing should be appending to it, but a reader
+        arriving between taking the audio and recording where it went would see
+        a segment that holds neither.
+        """
+        with self._lock:
+            if self.spill is not None or not self.pcm:
+                return False
+            self.spill = writer.append(self.user_id, self.start, bytes(self.pcm))
+            self.pcm = bytearray()
+            return True
 
     def clear(self) -> None:
         """Release the buffered audio, once there is nothing left to read it for."""

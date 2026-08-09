@@ -56,12 +56,17 @@ def _all_silence(segments: list[Segment]) -> bool:
     Reads whichever representation a segment holds. Silence survives both the
     downmix and the resample, so the verdict is the same either way: the mean
     of two zeroes is zero, and a filter over zeroes returns them.
+
+    Asked of the segment rather than of its buffer, because a segment that has
+    been spilled answers from the flag taken when its samples were written. The
+    loop below reads every byte of a recording that really is silent, and doing
+    that from disk is the one read this whole path cannot afford.
     """
     total = 0
     for segment in segments:
-        if any(segment.pcm):
+        if not segment.is_silent():
             return False
-        total += len(segment.pcm)
+        total += segment.length()
     return total > 0
 
 
