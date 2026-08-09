@@ -130,6 +130,13 @@ sections below are therefore headed by the series rather than by one version.
   nothing compared the two. A test now reads the field names out of both and
   refuses a sample that has stopped describing the command.
 
+- **Nothing recorded where a transcript was written.** Both ways of announcing
+  a recording can fail, an interaction that expired and a channel the bot can
+  no longer post to, and the transcript exists either way, so somebody with a
+  finished recording and no message had nothing to go on. The path is logged
+  when the pipeline finishes, before anything is sent, along with each audio
+  file `KEEP_AUDIO` produced.
+
 ### Added
 
 - **Audio can be written to disk.** `write_speaker_wav` lays one participant's

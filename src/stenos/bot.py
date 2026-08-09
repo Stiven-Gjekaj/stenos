@@ -641,6 +641,19 @@ async def finish_recording(
         log.exception("Transcription failed")
         return (f"{stopped}, but transcription failed: {error.__class__.__name__}: {error}"), None
 
+    # Recorded before anything is sent. Both ways of announcing a recording can
+    # fail, an interaction that expired and a channel the bot can no longer
+    # post to, and the transcript exists either way: the log is then the only
+    # thing that can say where it went.
+    log.info(
+        "Wrote %s (%d lines, %d segments).",
+        result.transcript_path,
+        len(result.lines),
+        result.segment_count,
+    )
+    for path in result.audio_paths:
+        log.info("Wrote %s.", path)
+
     message = describe_result(result, stopped=stopped)
     # Taken rather than read. The counter belongs to a method shared by every
     # recording, so leaving it standing makes the next recording report these

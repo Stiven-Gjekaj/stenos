@@ -1152,3 +1152,31 @@ async def test_a_recording_logs_the_packets_the_repairs_recovered(
     assert any("Recovered 12 packets" in message for message in caplog.messages)
     # Taken, so the next recording does not claim them too.
     assert upstream.recovered_frames() == 0
+
+
+async def test_where_the_transcript_went_is_on_record(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Both ways of announcing a recording can fail: an interaction that expired
+    # and a channel the bot can no longer post to. The transcript exists either
+    # way, so the log has to be able to say where it went.
+    monkeypatch.setattr(bot_module, "load_backend", lambda *a, **k: MockBackend(texts=["a line"]))
+    bot = make_bot(tmp_path, keep_audio=True)
+    channel = FakeVoiceChannel(2, "general", [])
+    author = FakeMember(11, "Alpha", channel=channel)
+    channel.members = [author]
+    await command(bot, "start")(FakeContext(1, author))
+    feed(bot.sessions[1])
+    ctx = FakeContext(1, author)
+
+    async def refuse(content: str, file: Any = None) -> None:
+        raise RuntimeError("Unknown Webhook")
+
+    ctx.followup.send = refuse  # type: ignore[method-assign]
+
+    with caplog.at_level(logging.INFO, logger="stenos"):
+        await command(bot, "stop")(ctx)
+
+    written = [message for message in caplog.messages if message.startswith("Wrote ")]
+    assert any(".txt" in message for message in written)
+    assert any(".wav" in message for message in written)
