@@ -1081,3 +1081,29 @@ async def test_status_stays_quiet_about_attribution_when_there_is_nothing_to_say
     await command(bot, "status")(ctx)
 
     assert "not attributed" not in ctx.responses[0][0]
+
+
+async def test_a_failing_check_does_not_stop_the_watchdog(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    # A discord.ext task re-raises after reporting, which ends the loop for the
+    # lifetime of the process. Every later recording would run with no ceiling
+    # and no disconnect detection, and the only sign would be one traceback.
+    bot, _channel, _session = await recording_with_self(tmp_path)
+    ran: list[str] = []
+
+    async def refuse() -> None:
+        raise ValueError("cannot convert float NaN to integer")
+
+    async def note() -> None:
+        ran.append("buffer")
+
+    monkeypatch.setattr(bot, "enforce_connection", refuse)
+    monkeypatch.setattr(bot, "enforce_buffer_limit", note)
+
+    with caplog.at_level(logging.ERROR, logger="stenos"):
+        await bot._watch_recordings()
+
+    # The second check still ran, and the failure was reported rather than lost.
+    assert ran == ["buffer"]
+    assert any("check failed" in message for message in caplog.messages)

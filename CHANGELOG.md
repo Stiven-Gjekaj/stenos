@@ -80,6 +80,14 @@ sections below are therefore headed by the series rather than by one version.
   `SEGMENT_GAP` of NaN holds a whole call in one segment. An infinity passes a
   bound honestly and means the same. All of them are refused now, by name.
 
+- **One failing check stopped the watchdog for good.** A `discord.ext` task
+  re-raises after reporting an exception, which ends the loop for the lifetime
+  of the process, so every later recording would run with no buffer ceiling and
+  no disconnect detection and the only sign would be a traceback long since
+  scrolled past. The `nan` above was exactly such an exception. Each check is
+  guarded separately now: one that fails is worth a line in the log and another
+  attempt in fifteen seconds, and the other check still runs.
+
 ### Added
 
 - **Audio can be written to disk.** `write_speaker_wav` lays one participant's

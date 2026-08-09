@@ -347,8 +347,18 @@ class StenosBot(discord.Bot):  # type: ignore[misc]
     async def _watch_recordings(self) -> None:
         # Connection first. A recording nothing is arriving on has no reason to
         # be measured against a ceiling it can no longer approach.
-        await self.enforce_connection()
-        await self.enforce_buffer_limit()
+        #
+        # Each is guarded separately, and neither is allowed to escape. A
+        # discord.ext task re-raises after reporting, which ends the loop for
+        # the lifetime of the process: every later recording would then run
+        # with no ceiling and no disconnect detection, and the only sign would
+        # be one traceback long since scrolled past. A check that fails is
+        # worth a line in the log and another attempt in fifteen seconds.
+        for check in (self.enforce_connection, self.enforce_buffer_limit):
+            try:
+                await check()
+            except Exception:
+                log.exception("A recording check failed, and will run again shortly")
 
     async def on_ready(self) -> None:
         log.info("Connected as %s", self.user)
