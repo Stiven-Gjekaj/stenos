@@ -11,6 +11,7 @@ from typing import Any
 import pytest
 
 from stenos import bot as bot_module
+from stenos import upstream
 from stenos.bot import build_bot
 from stenos.config import Config
 from stenos.transcribe import BackendUnavailableError, MockBackend
@@ -1107,3 +1108,25 @@ async def test_a_failing_check_does_not_stop_the_watchdog(
     # The second check still ran, and the failure was reported rather than lost.
     assert ran == ["buffer"]
     assert any("check failed" in message for message in caplog.messages)
+
+
+async def test_a_second_recording_does_not_inherit_the_first_skip_count(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(bot_module, "load_backend", lambda *a, **k: MockBackend(texts=["a line"]))
+    monkeypatch.setattr(upstream, "_skipped", 4, raising=False)
+
+    messages = []
+    for _ in range(2):
+        bot = make_bot(tmp_path)
+        channel = FakeVoiceChannel(2, "general", [])
+        author = FakeMember(11, "Alpha", channel=channel)
+        channel.members = [author]
+        await command(bot, "start")(FakeContext(1, author))
+        feed(bot.sessions[1])
+        ctx = FakeContext(1, author)
+        await command(bot, "stop")(ctx)
+        messages.append(ctx.followup.sent[0][0])
+
+    assert "4 packets would not decode" in messages[0]
+    assert "would not decode" not in messages[1]

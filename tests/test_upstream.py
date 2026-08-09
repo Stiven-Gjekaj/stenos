@@ -801,3 +801,16 @@ def test_probing_does_not_report_a_loss_that_did_not_happen(
         upstream._flush_delivers_everything(PacketDecoder)
 
     assert "were lost being flushed" not in caplog.text
+
+
+def test_taking_the_skipped_count_clears_it() -> None:
+    # The counter belongs to a method shared by every recording, so a count
+    # read without clearing makes the next recording report frames skipped
+    # during the last one as its own: the second call of an evening inherits
+    # the first call's number, and a transcript with no gaps is described as
+    # having them.
+    upstream._skipped = 7
+
+    assert upstream.take_skipped_frames() == 7
+    assert upstream.take_skipped_frames() == 0
+    assert upstream.skipped_frames() == 0

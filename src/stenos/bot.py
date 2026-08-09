@@ -48,7 +48,7 @@ from .upstream import (
     receive_repair_state,
     recover_decoded_audio,
     recover_flushed_packets,
-    skipped_frames,
+    take_skipped_frames,
     tolerate_double_stop,
     tolerate_undecodable_frames,
 )
@@ -641,7 +641,10 @@ async def finish_recording(
         return (f"{stopped}, but transcription failed: {error.__class__.__name__}: {error}"), None
 
     message = describe_result(result, stopped=stopped)
-    skipped = skipped_frames()
+    # Taken rather than read. The counter belongs to a method shared by every
+    # recording, so leaving it standing makes the next recording report these
+    # frames as its own.
+    skipped = take_skipped_frames()
     if skipped:
         # A gap in a transcript should have a stated cause rather than looking
         # like a pause in the conversation.

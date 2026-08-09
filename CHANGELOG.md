@@ -111,6 +111,13 @@ sections below are therefore headed by the series rather than by one version.
   it cannot. That is the command somebody runs before leaving a host
   unattended.
 
+- **A recording reported the previous recording's skipped frames.** The count
+  of packets that would not decode belongs to a method shared by every
+  recording, so it is process wide, and the stop message read it without
+  clearing it. The second call of an evening inherited the first call's number
+  and a transcript with no gaps was described as having them. A recording takes
+  the count now and leaves nothing behind for the next one.
+
 ### Added
 
 - **Audio can be written to disk.** `write_speaker_wav` lays one participant's

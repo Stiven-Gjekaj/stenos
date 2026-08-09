@@ -80,6 +80,7 @@ __all__ = [
     "recover_flushed_packets",
     "recovered_frames",
     "skipped_frames",
+    "take_skipped_frames",
     "tolerate_double_stop",
     "tolerate_undecodable_frames",
 ]
@@ -362,6 +363,20 @@ def receive_repair_state() -> PatchState:
 
 _skipped = 0
 _decode_patched = False
+
+
+def take_skipped_frames() -> int:
+    """How many frames have been skipped, and start counting again.
+
+    The count is process wide, because what does the skipping is one method on
+    a class shared by every recording. Read without clearing, a recording
+    reports every frame skipped since the process started as though they were
+    its own, so the second call of an evening inherits the first call's number
+    and a transcript with no gaps is described as having them.
+    """
+    global _skipped
+    taken, _skipped = _skipped, 0
+    return taken
 
 
 def skipped_frames() -> int:
