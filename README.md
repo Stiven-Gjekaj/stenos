@@ -407,11 +407,11 @@ becomes text, and text becomes one ordered transcript.
 | **Transport** | upstream.py | 861 | Repairs the py-cord 2.8.1 defects that lose received audio or end a recording, when they are present |
 | **Conversion** | audio.py | 363 | Downmixes and resamples to 16 kHz mono, discarding fragments too short to carry speech |
 | **Verification** | integrity.py | 111 | Separates a recording that captured nothing from a call in which nobody spoke |
-| **Transcription** | transcribe.py | 336 | Backend protocol, mlx and faster-whisper implementations, and the segment loop |
+| **Transcription** | transcribe.py | 410 | Backend protocol, mlx and faster-whisper implementations, and the segment loop |
 | **Output** | transcript.py | 272 | Merges, orders, and writes the transcript and its sidecar portably |
 | **Commands** | bot.py | 1119 | Slash commands, session state, the offline pipeline, and the CLI |
 | **Configuration** | config.py | 323 | Validated environment parsing and platform-aware backend resolution |
-| **Total** | **11 files** | **4102** | Plus 6818 lines of tests |
+| **Total** | **11 files** | **4176** | Plus 6818 lines of tests |
 
 ```
 src/stenos/      the bot (sink, transport, audio, transcription, output, commands)

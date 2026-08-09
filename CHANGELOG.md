@@ -162,6 +162,18 @@ sections below are therefore headed by the series rather than by one version.
 
 ### Added
 
+- **A backend can report how sure it was.** `Recognition` carries the text
+  alongside the model's own no speech probability and average token log
+  probability, and `recognise` asks a backend for it and falls back to the text
+  when it cannot say. The protocol stays the smaller of the two, because every
+  backend can return text and only some can say more: mlx-whisper is the
+  primary target on Apple Silicon and reports neither through this interface.
+
+  `FasterWhisperBackend` was computing both and discarding them, in the line
+  that unpacked its result and threw the second half away. Where a segment
+  comes back as several parts the worst decides, since one stretch the model is
+  unsure of is what makes a whole line worth doubting.
+
 - **Audio can be written to disk.** `write_speaker_wav` lays one participant's
   segments out on the call's timeline, filling the gaps with silence, so an
   offset in the transcript is the same offset in the file and the sidecar

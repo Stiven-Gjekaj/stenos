@@ -7,6 +7,7 @@ shelling out to a separate binary, would dominate total runtime.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Protocol, cast
@@ -18,6 +19,8 @@ from .audio import SILENT_RMS, loudness, segment_to_audio
 from .config import BACKEND_AUTO, BACKEND_MLX, resolve_backend
 from .sink import Segment
 
+log = logging.getLogger("stenos")
+
 __all__ = [
     "MAX_DISTINCT_RATIO",
     "MIN_WORDS_FOR_REPETITION",
@@ -27,12 +30,14 @@ __all__ = [
     "MLXBackend",
     "MockBackend",
     "ProgressCallback",
+    "Recognition",
     "TranscribedSegment",
     "TranscriptionBackend",
     "backend_status",
     "invented_reason",
     "load_backend",
     "mlx_repo_for",
+    "recognise",
     "transcribe_segments",
 ]
 
@@ -67,6 +72,44 @@ MLX_MODEL_REPOS = {
 
 #: Called with the number of segments completed and the total, after each one.
 ProgressCallback = Callable[[int, int], None]
+
+
+@dataclass(frozen=True, slots=True)
+class Recognition:
+    """What a backend heard, and how sure it was, when it can say.
+
+    ``no_speech`` is the model's own estimate that a segment holds no speech,
+    and ``logprob`` the average log probability of the tokens it chose. Both
+    are None for a backend that does not report them, which is why nothing may
+    rely on having them: mlx-whisper is the primary target on Apple Silicon and
+    reports neither through the interface used here.
+    """
+
+    text: str
+    no_speech: float | None = None
+    logprob: float | None = None
+
+
+def recognise(
+    backend: TranscriptionBackend,
+    audio: npt.NDArray[np.float32],
+    language: str | None = None,
+) -> Recognition:
+    """Transcribe one segment, taking the confidence when the backend has it.
+
+    Asked for rather than required. Every backend can return text, and only
+    some can say how sure they were, so the protocol stays the smaller of the
+    two and the richer answer is an extra a backend may offer.
+    """
+    detailed = getattr(backend, "recognise", None)
+    if callable(detailed):
+        try:
+            return cast("Recognition", detailed(audio, language))
+        except Exception:
+            # A backend whose richer path fails still has a working one.
+            log.exception("%s could not report confidence, using its text alone", backend.name)
+
+    return Recognition(text=backend.transcribe(audio, language).strip())
 
 
 class BackendUnavailableError(RuntimeError):
@@ -240,14 +283,45 @@ class FasterWhisperBackend:
         audio: npt.NDArray[np.float32],
         language: str | None = None,
     ) -> str:
+        return self.recognise(audio, language).text
+
+    def recognise(
+        self,
+        audio: npt.NDArray[np.float32],
+        language: str | None = None,
+    ) -> Recognition:
+        """Transcribe one segment and report what the model thought of it.
+
+        faster-whisper returns a no speech probability and an average token log
+        probability per part, and both were being discarded. They are the
+        model's own account of whether it heard anything, which is what the
+        text alone cannot say.
+
+        A segment reaches the model already bounded at ``MAX_SEGMENT``, which
+        is the window an encoder reads, so it usually comes back as one part.
+        Where it comes back as several, the worst part decides: one stretch the
+        model is unsure of is what makes the whole line worth doubting.
+        """
         segments, _info = self._model.transcribe(
             audio,
             language=language,
             beam_size=self.beam_size,
         )
         # transcribe returns a generator; it must be consumed before the text
-        # is available.
-        return " ".join(part.text.strip() for part in segments).strip()
+        # or the confidence is available.
+        parts = list(segments)
+
+        no_speech = [
+            value for part in parts if (value := getattr(part, "no_speech_prob", None)) is not None
+        ]
+        logprob = [
+            value for part in parts if (value := getattr(part, "avg_logprob", None)) is not None
+        ]
+        return Recognition(
+            text=" ".join(part.text.strip() for part in parts).strip(),
+            no_speech=max(no_speech) if no_speech else None,
+            logprob=min(logprob) if logprob else None,
+        )
 
 
 def _load_faster_whisper() -> Callable[..., Any]:
