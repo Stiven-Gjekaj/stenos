@@ -327,3 +327,23 @@ def test_invented_text_leaves_the_transcript_but_stays_in_the_sidecar(tmp_path: 
     assert "suppressed" not in segments[0]
     assert segments[1]["text"] == loop
     assert segments[1]["suppressed"] == "repetition"
+
+
+def test_an_audio_file_name_stays_inside_a_windows_path(tmp_path: Path) -> None:
+    # Windows measures the whole path against 260 characters. The stem alone
+    # runs to 104, so a speaker allowed the same length as a channel, plus an
+    # identifier, plus somewhere to live, can pass it.
+    sink = build_sink(speech(0.0, 11))
+
+    result = run_pipeline(
+        sink,
+        {11: "V" * 300},
+        channel_name="c" * 300,
+        config=config_for(tmp_path, keep_audio=True),
+        backend=MockBackend(),
+        recorded_at=RECORDED_AT,
+    )
+
+    assert len(result.audio_paths) == 1
+    assert len(result.audio_paths[0].name) <= 165, result.audio_paths[0].name
+    assert result.audio_paths[0].is_file()

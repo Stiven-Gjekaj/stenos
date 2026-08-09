@@ -100,6 +100,10 @@ def discard_audio(sink: TimestampedSink) -> None:
         segment.clear()
 
 
+#: Longest a speaker's name may run inside an audio file name.
+_SPEAKER_IN_FILENAME = 32
+
+
 def save_audio(
     sink: TimestampedSink,
     names: Mapping[int, str],
@@ -121,7 +125,13 @@ def save_audio(
 
     written: list[Path] = []
     for user_id, segments in sorted(by_speaker.items()):
-        speaker = sanitize_filename(resolve_speaker(user_id, names), fallback="speaker")
+        # Shortened well below what a channel name is allowed. The stem is
+        # already up to 104 characters, and Windows measures the whole path
+        # against 260, so a full length name here plus an identifier plus a
+        # directory to live in can pass it.
+        speaker = sanitize_filename(
+            resolve_speaker(user_id, names), fallback="speaker", max_length=_SPEAKER_IN_FILENAME
+        )
         try:
             written.append(
                 write_speaker_wav(output_dir / f"{stem}-{speaker}-{user_id}.wav", segments)

@@ -45,6 +45,12 @@ sections below are therefore headed by the series rather than by one version.
   people chose. The sidecar keeps the name exactly as it was, since structured
   output has no format to protect.
 
+- **An audio file name could run to 209 characters.** Windows measures the
+  whole path against 260, and the stem alone is already up to 104, so a speaker
+  allowed the same length as a channel name, plus an identifier, plus a
+  directory to live in, could pass it. A name is now shortened to 32 inside a
+  file name, which puts the worst case at 161.
+
 ### Added
 
 - **Audio can be written to disk.** `write_speaker_wav` lays one participant's
