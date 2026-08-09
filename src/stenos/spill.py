@@ -106,6 +106,11 @@ class SpillWriter:
     One file per participant plus the manifest, all opened on first use and
     held open for the length of the call, because a segment closes every few
     seconds and reopening per segment would be the only expensive part of this.
+
+    Nothing is created until the first segment arrives. Most recordings never
+    outgrow memory, and one that does not must leave the disk untouched for the
+    length of the call, which is the property this exists to preserve for
+    everybody else. A writer that was never used has no directory to remove.
     """
 
     def __init__(
@@ -117,26 +122,45 @@ class SpillWriter:
         sample_rate: int,
     ) -> None:
         self.directory = directory
-        self.directory.mkdir(parents=True, exist_ok=True)
+        self.channel = channel
+        self.started_at = started_at
+        self.sample_rate = sample_rate
         self._lock = threading.Lock()
         self._audio: dict[int, BinaryIO] = {}
         self._offsets: dict[int, int] = {}
+        self._names: dict[int, str] = {}
         self._closed = False
-        self._manifest: TextIO = (directory / MANIFEST_NAME).open(
-            "a", encoding="utf-8", newline="\n"
-        )
+        self._manifest: TextIO | None = None
+
+    @property
+    def started(self) -> bool:
+        """Whether anything has actually been written."""
+        return self._manifest is not None
+
+    def _start(self) -> TextIO:
+        """Create the directory and open the manifest. Caller holds the lock."""
+        if self._manifest is not None:
+            return self._manifest
+        self.directory.mkdir(parents=True, exist_ok=True)
+        self._manifest = (self.directory / MANIFEST_NAME).open("a", encoding="utf-8", newline="\n")
         self._record(
             {
                 "record": "recording",
                 "version": SPILL_VERSION,
-                "channel": channel,
-                "started_at": started_at.isoformat(),
-                "sample_rate": sample_rate,
+                "channel": self.channel,
+                "started_at": self.started_at.isoformat(),
+                "sample_rate": self.sample_rate,
             }
         )
+        # Whatever was learned before there was anywhere to put it. Written
+        # before the first segment, which is the order they happened in.
+        for user_id, name in self._names.items():
+            self._record({"record": "speaker", "user_id": user_id, "name": name})
+        return self._manifest
 
     def _record(self, payload: dict[str, Any]) -> None:
         """Write one manifest line and flush it. Caller holds the lock."""
+        assert self._manifest is not None
         self._manifest.write(json.dumps(payload, ensure_ascii=False) + "\n")
         self._manifest.flush()
 
@@ -154,17 +178,24 @@ class SpillWriter:
         return handle
 
     def remember(self, user_id: int, name: str) -> None:
-        """Record a participant's display name, which the guild may later lose."""
+        """Record a participant's display name, which the guild may later lose.
+
+        Held rather than written when nothing has spilled yet, so learning who
+        is in the channel does not by itself create a directory.
+        """
         with self._lock:
             if self._closed:
                 return
-            self._record({"record": "speaker", "user_id": user_id, "name": name})
+            self._names[user_id] = name
+            if self._manifest is not None:
+                self._record({"record": "speaker", "user_id": user_id, "name": name})
 
     def append(self, user_id: int, start: float, audio: bytes) -> Spilled:
         """Write one segment's samples and describe them, in that order."""
         with self._lock:
             if self._closed:
                 raise ValueError("this recording's storage is already closed")
+            self._start()
             handle = self._audio_file(user_id)
             offset = self._offsets[user_id]
             handle.write(audio)
@@ -198,11 +229,19 @@ class SpillWriter:
             for handle in self._audio.values():
                 handle.close()
             self._audio.clear()
-            self._manifest.close()
+            if self._manifest is not None:
+                self._manifest.close()
+                self._manifest = None
 
     def discard(self) -> None:
-        """Close and remove the directory, once the recording is safely written."""
+        """Close and remove the directory, once the recording is safely written.
+
+        A recording that never outgrew memory created nothing, so there is
+        nothing here to take away.
+        """
         self.close()
+        if not self.directory.is_dir():
+            return
         for child in sorted(self.directory.glob("*")):
             child.unlink(missing_ok=True)
         self.directory.rmdir()

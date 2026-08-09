@@ -147,6 +147,7 @@ def test_a_manifest_from_a_later_format_is_refused(tmp_path: Path) -> None:
     # Better to say nothing than to read a layout this version predates.
     directory = tmp_path / "call.partial"
     store = writer(directory)
+    store.append(11, 0.0, SPEECH)
     store.close()
 
     manifest = directory / MANIFEST_NAME
@@ -213,13 +214,40 @@ def test_a_name_learned_after_the_audio_is_still_recorded(tmp_path: Path) -> Non
     assert found.names == {11: "Alpha"}
 
 
-def test_nothing_is_lost_when_a_recording_holds_no_audio(tmp_path: Path) -> None:
+def test_a_recording_that_never_spilled_leaves_nothing_behind(tmp_path: Path) -> None:
+    # Most recordings never outgrow memory, and those must not touch the disk
+    # at all. Learning who is in the channel is not a reason to create a file.
     directory = tmp_path / "call.partial"
     store = writer(directory)
     store.remember(11, "Alpha")
+
+    assert store.started is False
+    assert not directory.exists()
+
+    store.close()
+
+    assert not directory.exists()
+    assert partial_recordings(tmp_path) == []
+
+
+def test_discarding_storage_that_was_never_used_is_harmless(tmp_path: Path) -> None:
+    store = writer(tmp_path / "call.partial")
+
+    store.discard()
+
+    assert not (tmp_path / "call.partial").exists()
+
+
+def test_a_name_learned_before_the_first_spill_is_still_recorded(tmp_path: Path) -> None:
+    # Held until there is somewhere to put it, then written ahead of the audio,
+    # which is the order the two actually happened in.
+    directory = tmp_path / "call.partial"
+    store = writer(directory)
+    store.remember(11, "Alpha")
+    store.append(11, 0.0, SPEECH)
     store.close()
 
     found = read_spill(directory)
 
     assert found is not None
-    assert found.segments == []
+    assert found.names == {11: "Alpha"}
