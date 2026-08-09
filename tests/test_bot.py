@@ -21,6 +21,7 @@ from stenos.bot import (
 )
 from stenos.config import Config
 from stenos.sink import TimestampedSink
+from stenos.transcript import TranscriptLine
 
 
 class FakeMember:
@@ -43,10 +44,17 @@ def session_for(members: list[FakeMember] | None = None) -> RecordingSession:
 
 
 def result_with(**overrides: Any) -> RecordingResult:
+    # The lines match the speaker count rather than being empty. speakers is
+    # derived from them in the real pipeline, so a result claiming three of
+    # them and carrying none is a state that cannot occur, and a report about
+    # an empty transcript reads it as one.
     defaults: dict[str, Any] = {
         "transcript_path": Path("out.txt"),
         "sidecar_path": Path("out.json"),
-        "lines": [],
+        "lines": [
+            TranscriptLine(start=float(index), user_id=index, speaker=name, text="said something")
+            for index, name in enumerate(("Alpha", "Bravo", "Charlie"), start=1)
+        ],
         "segment_count": 12,
         "duration": 90.0,
         "packet_count": 400,
@@ -242,3 +250,25 @@ def test_a_limit_of_zero_is_reported_as_switched_off() -> None:
 
     assert "buffer limit     none" in report
     assert "disconnect grace none" in report
+
+
+def test_a_recording_whose_lines_were_all_held_back_says_so() -> None:
+    # Audio arrived and was transcribed, and nothing survived into the
+    # transcript: every segment was empty or was held back as invented. The
+    # report used to read "Transcribed 5 segments from 0 speakers", which
+    # describes that as a success and names a speaker count of nobody.
+    result = RecordingResult(
+        transcript_path=Path("t.txt"),
+        sidecar_path=Path("t.json"),
+        lines=[],
+        segment_count=5,
+        duration=12.0,
+        packet_count=100,
+        speakers=0,
+    )
+
+    message = describe_result(result)
+
+    assert "0 speakers" not in message
+    assert "none produced a usable line" in message
+    assert "5 segments" in message

@@ -267,6 +267,18 @@ def describe_result(result: RecordingResult, *, stopped: str = "Recording stoppe
             "connection carried no decodable audio; see the known limitations "
             "section of the documentation."
         )
+    if not result.lines:
+        # Audio arrived and was transcribed, and none of it survived into the
+        # transcript: every segment came back empty, or was held back as
+        # something the model invented rather than heard. Reporting the segment
+        # count and "from 0 speakers" described that as a success.
+        return (
+            f"{stopped} after {format_duration(result.duration)}. "
+            f"{result.segment_count} segments were transcribed and none produced "
+            f"a usable line, so the transcript is empty. Audio with nothing in it "
+            f"is held back rather than written out, since the model returns a "
+            f"confident sentence for it."
+        )
     return (
         f"{stopped}. Transcribed {result.segment_count} segments "
         f"from {result.speakers} speakers over {format_duration(result.duration)}."

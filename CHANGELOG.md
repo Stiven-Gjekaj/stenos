@@ -28,6 +28,15 @@ sections below are therefore headed by the series rather than by one version.
   flag and `write` never consulted it. It does now, before it reads anything,
   so a refused packet costs not even a clock read.
 
+- **A recording whose every line was held back reported a success.** Audio
+  arrives, segments transcribe, and nothing survives into the transcript,
+  because each came back empty or was held back as something the model invented
+  rather than heard. The report read "Transcribed 5 segments from 0 speakers",
+  which describes that as a success and names a speaker count of nobody. It now
+  says the transcript is empty and why. The fixture behind the old report was
+  itself impossible, claiming three speakers and carrying no lines, which is a
+  state the pipeline cannot produce since one is derived from the other.
+
 ### Added
 
 - **Audio can be written to disk.** `write_speaker_wav` lays one participant's
