@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+import sys
 import threading
 import time
 from collections.abc import Sequence
 from itertools import pairwise
+from pathlib import Path
 from unittest import mock
 
 import pytest
 
 from helpers import ScriptedClock
+from stenos import sink as sink_module
 from stenos.audio import TARGET_SAMPLE_RATE
 from stenos.sink import (
     BYTES_PER_SECOND,
@@ -21,6 +24,7 @@ from stenos.sink import (
     MONO_BYTES_PER_SECOND,
     Segment,
     TimestampedSink,
+    opus_library_candidates,
 )
 
 #: One Discord voice frame is 20 ms of 48 kHz stereo signed 16 bit audio.
@@ -542,3 +546,43 @@ def test_a_truncated_packet_does_not_end_the_recording() -> None:
     sink.write(FRAME, 1)
 
     assert sink.packet_count == 2
+
+
+@pytest.mark.parametrize(
+    ("platform", "expected"),
+    [
+        ("darwin", ["/opt/homebrew/lib/libopus.0.dylib"]),
+        ("linux", ["libopus.so.0", "libopus.so"]),
+        # Neither macOS, Windows, nor Linux. The platform key treats it as
+        # Linux and picks Linux names, and the candidate list used to read the
+        # platform a second time and add none of them, leaving the fallback
+        # search empty on a BSD.
+        ("freebsd14", ["libopus.so.0", "libopus.so"]),
+    ],
+)
+def test_the_opus_search_follows_the_platform_key(platform: str, expected: list[str]) -> None:
+    with mock.patch.object(sys, "platform", platform):
+        candidates = opus_library_candidates()
+
+    assert candidates, f"nothing to try on {platform}"
+    for name in expected:
+        assert name in candidates
+
+
+def test_windows_has_no_fallback_search_of_its_own() -> None:
+    # py-cord bundles a binary for Windows, so the default search finds one and
+    # there is nothing useful to guess at.
+    with mock.patch.object(sys, "platform", "win32"):
+        assert opus_library_candidates() == []
+
+
+def test_a_frozen_build_looks_inside_its_own_payload_first(tmp_path: Path) -> None:
+    # A standalone executable must not depend on the host having libopus.
+    with (
+        mock.patch.object(sys, "platform", "linux"),
+        mock.patch.object(sink_module, "bundle_directory", lambda: tmp_path),
+    ):
+        candidates = opus_library_candidates()
+
+    assert candidates[0].startswith(str(tmp_path))
+    assert any("discord" in candidate for candidate in candidates)

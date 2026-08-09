@@ -117,7 +117,8 @@ def opus_library_candidates() -> list[str]:
     prefix, so installing the package is not by itself enough to load it, and a
     frozen executable carries its own copy that no system search would find.
     """
-    names = _OPUS_FILE_NAMES[_platform_key()]
+    platform = _platform_key()
+    names = _OPUS_FILE_NAMES[platform]
     candidates: list[str] = []
 
     # A bundled copy comes first: a standalone executable must not depend on
@@ -127,14 +128,21 @@ def opus_library_candidates() -> list[str]:
         candidates.extend(str(bundle / name) for name in names)
         candidates.extend(str(bundle / "discord" / "bin" / name) for name in names)
 
-    if sys.platform == "darwin":
+    # Through the same key that chose the names, rather than reading the
+    # platform a second time. Read twice, the two disagreed on anything that is
+    # neither macOS, Windows, nor Linux: the key treats it as Linux and picks
+    # Linux names, and the branch below found no match and added none of them,
+    # so the search a BSD fell back on was empty.
+    if platform == "darwin":
         candidates += [
             "/opt/homebrew/lib/libopus.0.dylib",
             "/opt/homebrew/lib/libopus.dylib",
             "/usr/local/lib/libopus.0.dylib",
             "/usr/local/lib/libopus.dylib",
         ]
-    elif sys.platform.startswith("linux"):
+    elif platform == "linux":
+        # Windows is absent on purpose: py-cord bundles a binary for it, so
+        # the default search already finds one.
         candidates += list(names)
 
     return candidates

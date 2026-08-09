@@ -88,6 +88,14 @@ sections below are therefore headed by the series rather than by one version.
   guarded separately now: one that fails is worth a line in the log and another
   attempt in fifteen seconds, and the other check still runs.
 
+- **The libopus search read the platform twice and the two disagreed.** The key
+  that picks the file names treats anything that is not macOS or Windows as
+  Linux, and the branch adding paths to try tested `sys.platform` again and
+  matched only a real Linux. On a BSD the first chose Linux names and the
+  second added none of them, so the fallback search was empty and opus could
+  only be found by the default search or by naming it outright. One decision
+  now, made once.
+
 ### Added
 
 - **Audio can be written to disk.** `write_speaker_wav` lays one participant's
