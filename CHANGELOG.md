@@ -20,6 +20,14 @@ sections below are therefore headed by the series rather than by one version.
   recording and `cleanup` joined a thread that was not the one still working.
   Demonstrated by widening the window, and now one worker either way.
 
+- **A packet arriving after cleanup was buffered.** py-cord's router keeps
+  draining for a moment after a recording is stopped, and cleanup has by then
+  closed every segment, drained the reducer and joined it. A packet accepted
+  afterwards opened a segment nothing would ever reduce, and grew the buffers
+  that transcription was already reading. The sink has always had a `finished`
+  flag and `write` never consulted it. It does now, before it reads anything,
+  so a refused packet costs not even a clock read.
+
 ### Added
 
 - **Audio can be written to disk.** `write_speaker_wav` lays one participant's

@@ -344,7 +344,17 @@ class TimestampedSink(Sink):
 
     @Filters.container
     def write(self, data: Any, user: Any) -> None:
-        """Buffer one decoded packet, opening a new segment after a silent gap."""
+        """Buffer one decoded packet, opening a new segment after a silent gap.
+
+        A packet arriving after cleanup is dropped. py-cord's router keeps
+        draining for a moment after a recording is stopped, and cleanup has by
+        then closed every segment, drained the reducer and joined it, so a
+        packet accepted afterwards opens a segment nothing will ever reduce and
+        grows the buffers that transcription is already reading.
+        """
+        if self.finished:
+            return
+
         payload, speaker, ticks = _decoded(data, user)
         if payload is None:
             return

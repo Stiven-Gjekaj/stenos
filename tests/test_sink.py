@@ -171,13 +171,19 @@ def test_cleanup_marks_the_sink_finished() -> None:
     assert boundaries(sink) == [(1, 0.0)]
 
 
-def test_writes_after_cleanup_open_a_fresh_segment() -> None:
-    sink = TimestampedSink(clock=ScriptedClock([0.0, 0.02]), segment_gap=0.4)
+def test_writes_after_cleanup_are_dropped() -> None:
+    # This used to open a fresh segment, which was the mechanical consequence
+    # of cleanup emptying the open ones rather than anything anybody wanted:
+    # the reducer has been drained and joined by then, so that segment would
+    # never be reduced, and the buffers would grow while transcription read
+    # them. The clock is not read either, so a refused packet costs nothing.
+    sink = TimestampedSink(clock=ScriptedClock([0.0]), segment_gap=0.4)
     sink.write(FRAME, 1)
     sink.cleanup()
+
     sink.write(FRAME, 1)
 
-    assert len(sink.segments()) == 2
+    assert len(sink.segments()) == 1
 
 
 def test_filtered_users_are_ignored() -> None:
@@ -509,3 +515,19 @@ def test_only_one_reducer_is_started_when_two_threads_retire_at_once() -> None:
 
     assert len(started) == 1
     sink.cleanup()
+
+
+def test_a_packet_arriving_after_cleanup_is_refused() -> None:
+    # py-cord's router keeps draining briefly after a recording is stopped.
+    # Cleanup has by then closed every segment and joined the reducer, so a
+    # packet accepted afterwards opens a segment nothing will reduce and grows
+    # the buffers while transcription is already reading them.
+    sink = record([(0.0, 11)])
+    sink.cleanup()
+    before = sink.packet_count
+    held = sink.buffered_bytes
+
+    sink.write(FRAME, 11)
+
+    assert sink.packet_count == before
+    assert sink.buffered_bytes == held
