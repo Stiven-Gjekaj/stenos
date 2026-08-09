@@ -170,6 +170,21 @@ so the sidecar's offsets index into it. It takes the transcript's stem rather
 than working one out, since a stem already taken carries a counter and the two
 would otherwise diverge.
 
+**Nothing is written while a recording runs.** Every file a call produces is
+created after it ends. The transcript and the sidecar are one write each; the
+audio is streamed a segment at a time, so an hour of it never has to exist in
+memory twice. A call that captured nothing writes nothing at all. Measured on
+an hour with four speakers, that is about 220 KB in two files, or 461 MB in six
+when the audio is kept, since a participant's file spans the whole call whether
+they spoke through it or not.
+
+This is why the ceiling in `sink.py` is measured against memory and enforced by
+ending the recording, rather than met by spooling the buffer to disk. Spooling
+is the obvious way to lift the limit and it would trade a host that touches the
+disk once per call for one that writes continuously for the length of every
+call, on hardware chosen to sit in a cupboard for a year. `MAX_BUFFER_MB` stops
+instead, and says why in the channel.
+
 Alongside the transcript body, `write_sidecar` produces a JSON sidecar
 (`build_sidecar`) for downstream tooling with the following schema:
 
