@@ -12,6 +12,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from discord.client import _cancel_tasks as cancel_tasks
 
 from stenos import bot as bot_module
 from stenos import upstream
@@ -1310,3 +1311,53 @@ async def test_a_platform_without_loop_signal_handlers_says_so(
     monkeypatch.setattr(loop, "add_signal_handler", refuse)
 
     assert bot.watch_for_shutdown() is False
+
+
+def test_the_route_a_platform_without_signal_handlers_takes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Windows finishes a recording through py-cord's cleanup, not a handler.
+
+    Nothing is bound there, so Ctrl+C raises out of run_forever, py-cord
+    cancels every task, and the runner's finally awaits close. That close is
+    running inside a task that has already been cancelled, which is the reason
+    to doubt it: an await there could raise the cancellation straight back and
+    lose the call. It does not, because the cancel is requested once and the
+    delivery is over by the time the finally runs.
+
+    Synchronous, because _cancel_tasks runs the loop itself and cannot be
+    called from inside one, which is why the tests above cannot reach here.
+    """
+    monkeypatch.setattr(bot_module, "load_backend", lambda *a, **k: MockBackend(texts=["a line"]))
+    policy = asyncio.get_event_loop_policy()
+    try:
+        previous: Any = policy.get_event_loop()
+    except RuntimeError:
+        previous = None  # The asynchronous tests leave none behind.
+    loop = asyncio.new_event_loop()
+    try:
+        asyncio.set_event_loop(loop)
+        bot, _channel, session = loop.run_until_complete(recording_with_self(tmp_path))
+        feed(session)
+
+        async def runner() -> None:
+            try:
+                await asyncio.sleep(3600)  # The gateway, which never returns.
+            finally:
+                if not bot.is_closed():
+                    await bot.close()
+
+        gateway = asyncio.ensure_future(runner(), loop=loop)
+        loop.call_soon(loop.stop)  # Stands in for the KeyboardInterrupt.
+        loop.run_forever()
+        cancel_tasks(loop)
+    finally:
+        loop.close()
+        asyncio.set_event_loop(previous)
+
+    # Cancelled rather than merely finished, so the close above really did run
+    # on the path this is here to hold rather than on an ordinary return.
+    assert gateway.cancelled()
+    assert bot.sessions == {}
+    assert "shutting down" in session.text_channel.sent[0][0]
+    assert session.text_channel.sent[0][1] is not None  # The transcript.
