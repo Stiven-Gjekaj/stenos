@@ -507,6 +507,42 @@ class StenosBot(discord.Bot):  # type: ignore[misc]
                 closing="Raise MAX_BUFFER_MB to record for longer.",
             )
 
+    async def finish_all(self, *, stopped: str, closing: str = "") -> None:
+        """End every live recording, one at a time, reporting each.
+
+        Sessions are taken from the register as they are handled, so a check
+        running alongside this finds nothing left to end rather than ending the
+        same recording twice.
+        """
+        for guild_id in list(self.sessions):
+            session = self.sessions.pop(guild_id, None)
+            if session is None:
+                continue
+            log.warning("Finishing the recording in %s before exit.", session.channel_name)
+            await self.finish_and_report(session, stopped=stopped, closing=closing)
+
+    async def close(self) -> None:
+        """Finish every live recording before disconnecting.
+
+        A recording exists only in memory until it is transcribed and written,
+        so a process that exits with one running loses the whole call. The
+        intended host is unattended and runs under a service manager that
+        restarts it, which makes this the ordinary path rather than a rare one.
+
+        Transcription can take minutes, and this is what keeps the process
+        alive for them. A service manager that kills rather than waits is the
+        one thing that can still lose a recording here, which is why the
+        operational notes ask for a stop timeout that allows for it.
+        """
+        if self._watch_recordings.is_running():
+            self._watch_recordings.cancel()
+
+        await self.finish_all(
+            stopped="Recording stopped because the bot is shutting down",
+            closing="Everything captured up to that point was transcribed.",
+        )
+        await super().close()
+
     def is_self(self, member: Any) -> bool:
         """Whether a voice state update is about this bot rather than a participant."""
         user = self.user

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from pathlib import Path
@@ -1180,3 +1181,57 @@ async def test_where_the_transcript_went_is_on_record(
     written = [message for message in caplog.messages if message.startswith("Wrote ")]
     assert any(".txt" in message for message in written)
     assert any(".wav" in message for message in written)
+
+
+# Shutting down. A recording exists only in memory until it is transcribed and
+# written, so a process that exits with one running loses the whole call.
+
+
+async def test_closing_finishes_a_live_recording(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(bot_module, "load_backend", lambda *a, **k: MockBackend(texts=["a line"]))
+    bot, channel, session = await recording_with_self(tmp_path)
+    feed(session)
+
+    await bot.close()
+
+    assert bot.sessions == {}
+    (message, _attachment) = session.text_channel.sent[0]
+    assert "shutting down" in message
+    assert "Transcribed" in message
+    assert channel.voice_client.disconnected is True
+
+
+async def test_closing_with_nothing_recording_is_quiet(tmp_path: Path) -> None:
+    bot = make_bot(tmp_path)
+
+    await bot.close()
+
+    assert bot.sessions == {}
+
+
+async def test_closing_twice_does_not_transcribe_twice(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(bot_module, "load_backend", lambda *a, **k: MockBackend())
+    bot, _channel, session = await recording_with_self(tmp_path)
+    feed(session)
+
+    await bot.close()
+    await bot.close()
+
+    assert len(session.text_channel.sent) == 1
+
+
+async def test_closing_stops_the_watchdog(tmp_path: Path) -> None:
+    # It would otherwise fire against sessions being torn down underneath it.
+    bot, _channel, _session = await recording_with_self(tmp_path)
+    await bot.on_ready()
+    assert bot._watch_recordings.is_running()
+
+    await bot.close()
+    # cancel() marks the task; it reports as stopped once the loop runs again.
+    await asyncio.sleep(0)
+
+    assert not bot._watch_recordings.is_running()

@@ -12,6 +12,14 @@ sections below are therefore headed by the series rather than by one version.
 
 ### Fixed
 
+- **A recording was lost when the bot shut down.** A recording exists only in
+  memory until it is transcribed and written, and nothing finished one on the
+  way out, so a restart cost the whole call. The intended host is unattended
+  and runs under a service manager that restarts it, which makes this the
+  ordinary path rather than a rare one. Closing now ends every live recording
+  through the same path the stop command uses, stopping the watchdog first so
+  it cannot fire against sessions being torn down underneath it.
+
 - **Two threads retiring a segment at once started two reducers.** The router
   retires a segment that closed and `cleanup` retires whatever was still open,
   from different threads, and the check for an existing worker was not guarded.
