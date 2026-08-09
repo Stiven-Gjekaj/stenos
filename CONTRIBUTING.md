@@ -53,6 +53,13 @@ Install the hooks so the first two run before each commit rather than in CI:
 - `pytest tests/compat -m compat` runs the cross-platform checks. They are
   excluded from the default run because they assert things about the host, such
   as whether libopus is installed.
+- The README states how many tests there are and how long each source file is,
+  and three tests fail the commit that lets one of those drift. Adding a test
+  or a function moves them, so the answer is a command rather than arithmetic:
+
+      uv run python scripts/refresh_counts.py
+
+  Pass `--check` to see what is stale without rewriting anything.
 - No test may open a gateway, a voice connection, or a model. Mock the backend
   with `MockBackend`, which ships with the package for exactly this reason.
 

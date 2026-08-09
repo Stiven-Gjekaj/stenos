@@ -1,6 +1,6 @@
 [project]
 name = "stenos"
-version = "0.2.3.35"
+version = "0.2.3.36"
 description = "Discord voice recorder producing timestamped, speaker-attributed transcripts with local inference"
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
