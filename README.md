@@ -9,7 +9,7 @@ _One timestamped, speaker-attributed transcript. No audio leaves the machine_
 <p align="center">
   <img src="https://img.shields.io/badge/Python-3.11%20to%203.13-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python 3.11 to 3.13"/>
   <img src="https://img.shields.io/badge/dependencies-4_direct-007ec6?style=for-the-badge" alt="Four direct runtime dependencies"/>
-  <img src="https://img.shields.io/badge/tests-627_passing-427819?style=for-the-badge" alt="627 tests passing"/>
+  <img src="https://img.shields.io/badge/tests-642_passing-427819?style=for-the-badge" alt="642 tests passing"/>
 </p>
 
 <p align="center">
@@ -415,7 +415,7 @@ becomes text, and text becomes one ordered transcript.
 | **Output** | transcript.py | 278 | Merges, orders, and writes the transcript and its sidecar portably |
 | **Commands** | bot.py | 1119 | Slash commands, session state, the offline pipeline, and the CLI |
 | **Configuration** | config.py | 323 | Validated environment parsing and platform-aware backend resolution |
-| **Total** | **11 files** | **4216** | Plus 7024 lines of tests |
+| **Total** | **12 files** | **4510** | Plus 7249 lines of tests |
 
 ```
 src/stenos/      the bot (sink, transport, audio, transcription, output, commands)
