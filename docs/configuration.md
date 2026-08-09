@@ -118,17 +118,44 @@ chunking, and the bound is worth it.
 
 *Default: `1024` megabytes. `0` removes the limit.*
 
-Buffered audio at which a recording stops itself, transcribes what it captured,
-and says so in the text channel.
+Buffered audio at which a recording stops being held in memory and continues on
+disk instead.
 
 A recording holds about 32,000 bytes for every second of speech, summed across
-speakers, so the default is roughly nine hours before it fires. Nothing else
-bounds a recording: without this, a long enough call ends with the host out of
-memory and the whole recording lost. With it, the call ends early and the
-transcript survives.
+speakers, so the default is roughly nine hours before it fires. Below the mark
+nothing is written until the call ends, which is what keeps an unattended host
+off the disk. Above it, each segment moves to `OUTPUT_DIR` as it closes and the
+memory is released, so the call continues rather than ending.
 
-Raise it on a host with memory to spare. Set it to `0` only if you would rather
-lose a recording than have one stop on its own.
+**This used to end the recording.** Before `0.2.3` there was nowhere for the
+audio to go, so crossing the mark stopped the call and transcribed what it had.
+The limit that ends a recording is now [`MAX_DISK_MB`](#max_disk_mb), and this
+one only decides where the audio lives. A host that was set low deliberately,
+to stop long calls, wants that value in `MAX_DISK_MB` now.
+
+Lower it on a small host, which is the case it exists for: a Raspberry Pi with
+a gigabyte cannot hold a long meeting, and used to lose it. Set it to `0` to
+keep the whole call resident however long it runs.
+
+### `MAX_DISK_MB`
+
+*Default: `4096` megabytes. `0` removes the limit.*
+
+Audio at which a recording stops itself, transcribes what it captured, and says
+so in the text channel. Counts what is on disk as well as what is in memory, so
+it bounds the whole recording rather than either half.
+
+Generous on purpose, at some thirty five hours of speech. It exists to stop a
+small host filling its disk, not to bound an ordinary call, so the number that
+matters is how much room `OUTPUT_DIR` has rather than how long a meeting runs.
+
+Set it to `0` only if you would rather lose a recording, or fill a disk, than
+have a call stop on its own.
+
+Audio spilled this way lives in a `.partial` directory beside the transcripts
+and is removed once the transcript is written. One left behind means the
+process did not survive the call; see
+[`--recover`](troubleshooting.md#a-recording-was-interrupted).
 
 ### `DISCONNECT_GRACE`
 

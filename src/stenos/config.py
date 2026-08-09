@@ -41,10 +41,18 @@ DEFAULT_MIN_SEGMENT = 0.3
 #: silence. Also the window a Whisper encoder reads.
 DEFAULT_MAX_SEGMENT = 30.0
 
-#: Buffered audio at which a recording stops itself, in megabytes. At the
+#: Buffered audio at which a recording moves to disk, in megabytes. At the
 #: rate a reduced segment holds, this is about nine hours of speech. Zero
-#: removes the limit, for a host with memory to spare and a reason to use it.
+#: removes the limit, for a host with memory to spare and a reason to use it,
+#: and keeps the whole call resident however long it runs.
 DEFAULT_MAX_BUFFER_MB = 1024.0
+
+#: Audio at which a recording stops itself, in megabytes, counting what is on
+#: disk as well as what is in memory. This is the ceiling that ends a call,
+#: where MAX_BUFFER_MB only decides where the audio lives. Generous on purpose,
+#: at some thirty five hours of speech, because it exists to stop a small host
+#: filling its disk rather than to bound an ordinary call. Zero removes it.
+DEFAULT_MAX_DISK_MB = 4096.0
 
 #: How long a recording waits for a lost voice connection to come back before
 #: it ends itself, in seconds. py-cord reconnects and resumes on its own and
@@ -74,6 +82,7 @@ class Config:
     min_segment: float = DEFAULT_MIN_SEGMENT
     max_segment: float = DEFAULT_MAX_SEGMENT
     max_buffer_mb: float = DEFAULT_MAX_BUFFER_MB
+    max_disk_mb: float = DEFAULT_MAX_DISK_MB
     disconnect_grace: float = DEFAULT_DISCONNECT_GRACE
     keep_audio: bool = False
     output_dir: Path = field(default=DEFAULT_OUTPUT_DIR)
@@ -315,6 +324,7 @@ def load_config(env: Mapping[str, str] | None = None, *, use_dotenv: bool = True
         min_segment=_read_float(env, "MIN_SEGMENT", DEFAULT_MIN_SEGMENT, minimum=0.0),
         max_segment=_read_float(env, "MAX_SEGMENT", DEFAULT_MAX_SEGMENT, minimum=0.1),
         max_buffer_mb=_read_float(env, "MAX_BUFFER_MB", DEFAULT_MAX_BUFFER_MB, minimum=0.0),
+        max_disk_mb=_read_float(env, "MAX_DISK_MB", DEFAULT_MAX_DISK_MB, minimum=0.0),
         disconnect_grace=_read_float(
             env, "DISCONNECT_GRACE", DEFAULT_DISCONNECT_GRACE, minimum=0.0
         ),

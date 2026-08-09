@@ -414,8 +414,8 @@ becomes text, and text becomes one ordered transcript.
 | **Transcription** | transcribe.py | 444 | Backend protocol, mlx and faster-whisper implementations, and the segment loop |
 | **Output** | transcript.py | 278 | Merges, orders, and writes the transcript and its sidecar portably |
 | **Commands** | bot.py | 1119 | Slash commands, session state, the offline pipeline, and the CLI |
-| **Configuration** | config.py | 323 | Validated environment parsing and platform-aware backend resolution |
-| **Total** | **12 files** | **4649** | Plus 7455 lines of tests |
+| **Configuration** | config.py | 333 | Validated environment parsing and platform-aware backend resolution |
+| **Total** | **12 files** | **4659** | Plus 7455 lines of tests |
 
 ```
 src/stenos/      the bot (sink, transport, audio, transcription, output, commands)
