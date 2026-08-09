@@ -107,7 +107,8 @@ fanless laptop that will thermally throttle under sustained inference.
 - The model loaded once and reused across every segment
 - In-process resampling with an anti-aliasing filter, no subprocess per segment
 - Near-silence discarded before the model can invent a line from it, and what it invents anyway kept out of the transcript
-- A `.txt` transcript and a `.json` sidecar with raw timings
+- A `.txt` transcript and a versioned `.json` sidecar with raw timings
+- The recorded audio kept on request, one file per speaker on the call's timeline
 - UTF-8 with line feed endings and sanitised filenames on every platform
 
 </td>
@@ -196,7 +197,9 @@ under [known limitations](#known-limitations) were found and repaired.
 
 Transcripts are written to `stenos-<channel>-<timestamp>.txt` under
 `OUTPUT_DIR`, which defaults to `transcripts/`, and attached to the completion
-message when they fit inside the server's upload limit.
+message when they fit inside the server's upload limit. Set `KEEP_AUDIO` to
+keep the recording as well, one WAV per participant laid out on the call's
+timeline, so an offset in the transcript is the same offset in the file.
 
 ### Creating the bot
 

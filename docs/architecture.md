@@ -150,6 +150,12 @@ Three portability decisions live here, each covered by the compatibility suite:
   otherwise writes the system code page and translates line endings, so the
   same call would produce different bytes on different hosts.
 
+`KEEP_AUDIO` adds a WAV per participant beside the transcript, through
+`write_speaker_wav`, laid out on the call's timeline with silence in the gaps
+so the sidecar's offsets index into it. It takes the transcript's stem rather
+than working one out, since a stem already taken carries a counter and the two
+would otherwise diverge.
+
 Alongside the transcript body, `write_sidecar` produces a JSON sidecar
 (`build_sidecar`) for downstream tooling with the following schema:
 

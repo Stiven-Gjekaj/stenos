@@ -137,6 +137,11 @@ sections below are therefore headed by the series rather than by one version.
   when the pipeline finishes, before anything is sent, along with each audio
   file `KEEP_AUDIO` produced.
 
+- **The documentation now mentions the audio at all.** The README's feature
+  list, the section saying where transcripts go, and the architecture page each
+  described a recording as producing a transcript and a sidecar, which stopped
+  being the whole of it when `KEEP_AUDIO` started writing files.
+
 ### Added
 
 - **Audio can be written to disk.** `write_speaker_wav` lays one participant's
