@@ -28,7 +28,10 @@ sections below are therefore headed by the series rather than by one version.
   arriving while a recording is still transcribing is ignored rather than
   starting a second shutdown that transcribes it twice. Windows takes no signal
   handlers on an event loop and says so, where Ctrl+C reaches close by its own
-  route and there is no SIGTERM to catch.
+  route and there is no SIGTERM to catch. That route runs close inside a task
+  py-cord has already cancelled, which is reason enough to doubt it survives an
+  await, so a test now drives py-cord's own cleanup and asserts the transcript
+  comes out of it.
 
 - **Two threads retiring a segment at once started two reducers.** The router
   retires a segment that closed and `cleanup` retires whatever was still open,
