@@ -5,6 +5,7 @@ No test opens a gateway or voice connection.
 
 from __future__ import annotations
 
+import asyncio
 import re
 from pathlib import Path
 from typing import Any
@@ -15,8 +16,10 @@ from stenos.bot import (
     RecordingResult,
     RecordingSession,
     build_bot,
+    combine_progress,
     describe_environment,
     describe_result,
+    discord_progress,
     format_duration,
     main,
 )
@@ -302,3 +305,146 @@ def test_the_environment_report_says_when_it_cannot_write(tmp_path: Path) -> Non
     # is that the refusal names an error and says something.
     refusal = re.search(r"CANNOT BE WRITTEN \((\w+Error): (\S.*)\)", report)
     assert refusal is not None, report
+
+
+class FakeMessage:
+    """Stand-in for the message ``discord_progress`` edits in place."""
+
+    def __init__(self, content: str) -> None:
+        self.content = content
+        self.edits: list[str] = []
+
+    async def edit(self, *, content: str) -> None:
+        self.content = content
+        self.edits.append(content)
+
+
+class FakeChannel:
+    """Stand-in for a text channel. ``fail`` mimics one that cannot be posted to."""
+
+    def __init__(self, *, fail: bool = False, slow: bool = False) -> None:
+        self.sent: list[str] = []
+        self.message: FakeMessage | None = None
+        self.fail = fail
+        # Yields inside send, so a second report can arrive while the first is
+        # still in it, which is what a real HTTP call does.
+        self.slow = slow
+
+    async def send(self, content: str) -> FakeMessage:
+        if self.fail:
+            raise RuntimeError("cannot post")
+        if self.slow:
+            await asyncio.sleep(0)
+        self.sent.append(content)
+        self.message = FakeMessage(content)
+        return self.message
+
+
+async def _settle() -> None:
+    # discord_progress hands its report to the loop with
+    # run_coroutine_threadsafe instead of awaiting it, so a scheduled report
+    # needs a few real turns of the loop before it has actually run.
+    for _ in range(5):
+        await asyncio.sleep(0)
+
+
+async def test_discord_progress_posts_once_and_then_edits() -> None:
+    channel = FakeChannel()
+    report = discord_progress(channel, asyncio.get_running_loop(), every=0.0)
+
+    report(1, 10)
+    await _settle()
+    report(2, 10)
+    await _settle()
+
+    assert channel.sent == ["Transcribing... 1/10 segments (10%)"]
+    assert channel.message is not None
+    assert channel.message.edits == ["Transcribing... 2/10 segments (20%)"]
+
+
+async def test_discord_progress_is_rate_limited() -> None:
+    # No time passes between any of these, so nothing is due and nothing is
+    # said, on the same PROGRESS_INTERVAL log_progress uses.
+    channel = FakeChannel()
+    report = discord_progress(channel, asyncio.get_running_loop())
+
+    report(1, 10)
+    await _settle()
+    report(2, 10)
+    await _settle()
+
+    assert channel.sent == []
+
+
+async def test_a_transcription_shorter_than_the_interval_says_nothing() -> None:
+    # The clock starts when transcription does, so a run that finishes inside
+    # one interval never had a wait to report. A single segment recording used
+    # to announce "1/1 segments (100%)" after that segment was already done.
+    channel = FakeChannel()
+    report = discord_progress(channel, asyncio.get_running_loop())
+
+    report(1, 1)
+    await _settle()
+
+    assert channel.sent == []
+
+
+async def test_the_last_report_lands_once_anything_has_been_posted() -> None:
+    # Otherwise the message sits at whatever count it happened to reach when
+    # the interval last expired, and never says the transcription finished.
+    channel = FakeChannel()
+    report = discord_progress(channel, asyncio.get_running_loop(), every=0.0)
+
+    report(1, 10)
+    await _settle()
+    report(10, 10)
+    await _settle()
+
+    assert channel.sent == ["Transcribing... 1/10 segments (10%)"]
+    assert channel.message is not None
+    assert channel.message.edits[-1] == "Transcribing... 10/10 segments (100%)"
+
+
+async def test_two_reports_at_once_edit_one_message_rather_than_posting_two() -> None:
+    # Reports are handed to the loop and not waited on, so the second can begin
+    # while the first is still inside send. Unserialised it finds no message
+    # yet and posts a second one, which is what the whole thing exists to
+    # avoid: one message, edited in place.
+    channel = FakeChannel(slow=True)
+    report = discord_progress(channel, asyncio.get_running_loop(), every=0.0)
+
+    report(1, 10)
+    report(2, 10)
+    for _ in range(20):
+        await asyncio.sleep(0)
+
+    assert len(channel.sent) == 1
+    assert channel.message is not None
+    assert channel.message.edits == ["Transcribing... 2/10 segments (20%)"]
+
+
+async def test_a_channel_that_cannot_be_posted_to_does_not_raise() -> None:
+    # The transcript is the deliverable. A channel error must look like
+    # nothing happened rather than like the transcription failed.
+    channel = FakeChannel(fail=True)
+    report = discord_progress(channel, asyncio.get_running_loop(), every=0.0)
+
+    report(1, 10)
+    await _settle()
+
+    assert channel.sent == []
+
+
+def test_combine_progress_runs_every_callback() -> None:
+    calls: list[tuple[str, int, int]] = []
+
+    def make(name: str):
+        def report(done: int, total: int) -> None:
+            calls.append((name, done, total))
+
+        return report
+
+    combined = combine_progress(make("a"), make("b"))
+    combined(3, 10)
+
+    assert calls == [("a", 3, 10), ("b", 3, 10)]
