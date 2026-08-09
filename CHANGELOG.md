@@ -174,6 +174,21 @@ sections below are therefore headed by the series rather than by one version.
   comes back as several parts the worst decides, since one stretch the model is
   unsure of is what makes a whole line worth doubting.
 
+- **Whisper's own judgement decides whether it made a line up.** Text over
+  audio with nothing in it was held back by measuring the audio, because that
+  was the only signal available. Where a backend reports one, the model's no
+  speech probability and token confidence decide instead, on the same pair of
+  thresholds Whisper's decoder uses for the same call, and both have to hold:
+  an unsure transcription of real speech is somebody mumbling, and a confident
+  transcription of quiet speech is somebody speaking quietly. That second case
+  used to be thrown away, because a measurement cannot tell quiet speech from
+  silence except by sitting near the floor.
+
+  The measurement still decides where a backend cannot say, which is the mlx
+  path and therefore Apple Silicon, so it stays load bearing rather than
+  becoming a leftover. Repetition is still judged from the text, since a model
+  can be confident and looping at the same time.
+
 - **Audio can be written to disk.** `write_speaker_wav` lays one participant's
   segments out on the call's timeline, filling the gaps with silence, so an
   offset in the transcript is the same offset in the file and the sidecar

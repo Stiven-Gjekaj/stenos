@@ -22,9 +22,11 @@ from .sink import Segment
 log = logging.getLogger("stenos")
 
 __all__ = [
+    "LOGPROB_THRESHOLD",
     "MAX_DISTINCT_RATIO",
     "MIN_WORDS_FOR_REPETITION",
     "MLX_MODEL_REPOS",
+    "NO_SPEECH_THRESHOLD",
     "BackendUnavailableError",
     "FasterWhisperBackend",
     "MLXBackend",
@@ -150,7 +152,21 @@ class TranscribedSegment:
     suppressed: str | None = None
 
 
-def invented_reason(text: str, audio: npt.NDArray[np.float32]) -> str | None:
+#: Above this the model puts it at more likely than not that a segment holds no
+#: speech. Whisper's own decoder uses the same figure for the same decision.
+NO_SPEECH_THRESHOLD = 0.6
+
+#: Below this the model was unsure of the tokens it chose. Also Whisper's.
+#: Both have to hold: a confident transcription of quiet speech clears the
+#: second, and an unsure transcription of real speech clears the first.
+LOGPROB_THRESHOLD = -1.0
+
+
+def invented_reason(
+    text: str,
+    audio: npt.NDArray[np.float32],
+    recognition: Recognition | None = None,
+) -> str | None:
     """Why this text cannot be what was said, or None if it might be.
 
     Whisper does not decline to transcribe. Given audio with nothing in it, it
@@ -167,7 +183,17 @@ def invented_reason(text: str, audio: npt.NDArray[np.float32]) -> str | None:
     if not text.strip():
         return None
 
-    if loudness(audio) < SILENT_RMS:
+    # The model's own account first, where there is one. Both thresholds have
+    # to hold, which is how Whisper's decoder makes the same decision: a
+    # confident transcription of quiet speech clears the second, and an unsure
+    # transcription of real speech clears the first, so neither alone is
+    # enough. The measurement below stands in where a backend cannot say.
+    if recognition is not None and recognition.no_speech is not None:
+        if recognition.no_speech > NO_SPEECH_THRESHOLD and (
+            recognition.logprob is None or recognition.logprob < LOGPROB_THRESHOLD
+        ):
+            return "no-speech"
+    elif loudness(audio) < SILENT_RMS:
         return "silence"
 
     words = text.split()
@@ -394,14 +420,15 @@ def transcribe_segments(
 
     for index, segment in enumerate(ordered, start=1):
         audio = segment_to_audio(segment)
-        text = backend.transcribe(audio, language).strip()
+        heard = recognise(backend, audio, language)
+        text = heard.text.strip()
         results.append(
             TranscribedSegment(
                 user_id=segment.user_id,
                 start=segment.start,
                 duration=segment.duration,
                 text=text,
-                suppressed=invented_reason(text, audio),
+                suppressed=invented_reason(text, audio, heard),
             )
         )
         if progress is not None:

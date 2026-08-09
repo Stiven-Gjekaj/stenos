@@ -19,11 +19,13 @@ from stenos.transcribe import (
     FasterWhisperBackend,
     MLXBackend,
     MockBackend,
+    Recognition,
     TranscribedSegment,
     backend_status,
     invented_reason,
     load_backend,
     mlx_repo_for,
+    recognise,
     transcribe_segments,
 )
 
@@ -375,3 +377,71 @@ def test_transcribing_marks_what_the_model_invented() -> None:
     assert [result.suppressed for result in results] == ["silence", "silence"]
     # The text is kept either way.
     assert results[0].text == REAL_SPEECH
+
+
+LOUD = (np.sin(np.arange(16_000) * 0.1) * 0.5).astype(np.float32)
+QUIET = np.zeros(16_000, dtype=np.float32)
+
+
+def test_the_model_saying_there_was_no_speech_holds_the_line_back() -> None:
+    # Both thresholds have to hold, which is how Whisper's own decoder makes
+    # this decision.
+    heard = Recognition("Thank you.", no_speech=0.95, logprob=-1.8)
+
+    assert invented_reason(heard.text, LOUD, heard) == "no-speech"
+
+
+@pytest.mark.parametrize(
+    ("no_speech", "logprob"),
+    [
+        # Sure there was speech, and sure of the words.
+        (0.02, -0.3),
+        # Unsure of the words, but sure there was speech. Somebody mumbling is
+        # still somebody speaking.
+        (0.10, -2.5),
+        # Thinks there may be no speech, but is confident in what it heard.
+        (0.90, -0.2),
+    ],
+)
+def test_one_threshold_alone_is_not_enough(no_speech: float, logprob: float) -> None:
+    heard = Recognition("a real line", no_speech=no_speech, logprob=logprob)
+
+    assert invented_reason(heard.text, LOUD, heard) is None
+
+
+def test_quiet_speech_the_model_is_sure_of_is_kept() -> None:
+    # The measurement cannot tell quiet speech from silence except by sitting
+    # near the floor, so it used to hold this back. The model can.
+    heard = Recognition("said quietly", no_speech=0.05, logprob=-0.2)
+
+    assert invented_reason(heard.text, QUIET, heard) is None
+
+
+def test_the_measurement_still_decides_when_the_backend_cannot_say() -> None:
+    # mlx-whisper is the primary target on Apple Silicon and reports neither
+    # number through this interface, so this path stays load bearing.
+    assert invented_reason("Thank you.", QUIET, Recognition("Thank you.")) == "silence"
+    assert invented_reason("Thank you.", QUIET, None) == "silence"
+
+
+def test_repetition_is_judged_from_the_text_either_way() -> None:
+    # A model can be confident and still be looping.
+    looping = " ".join(["yes"] * 40)
+    heard = Recognition(looping, no_speech=0.01, logprob=-0.1)
+
+    assert invented_reason(looping, LOUD, heard) == "repetition"
+
+
+def test_a_backend_that_cannot_report_confidence_still_transcribes() -> None:
+    backend = MockBackend(texts=["plain text"])
+
+    assert recognise(backend, LOUD) == Recognition(text="plain text")
+
+
+def test_a_backend_whose_richer_path_fails_falls_back_to_its_text() -> None:
+    # A working transcription is worth more than a confidence number.
+    class Awkward(MockBackend):
+        def recognise(self, audio: object, language: object = None) -> Recognition:
+            raise RuntimeError("no info from this build")
+
+    assert recognise(Awkward(texts=["still here"]), LOUD).text == "still here"
