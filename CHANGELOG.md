@@ -32,6 +32,19 @@ sections below are therefore headed by the series rather than by one version.
   value in `MAX_DISK_MB` now; left alone it will find its recordings running
   longer than they used to.
 
+- **Transcription reports progress in the channel.** It is the longest part of
+  a recording, an hour of speech on a CPU backend takes about twenty five
+  minutes, and the channel showed nothing at all between the stop message and
+  the transcript arriving. One message is now posted and edited in place as
+  segments complete, on the same `PROGRESS_INTERVAL` the log already used.
+
+  It appears only when there is a wait worth reporting. The interval starts
+  when transcription does, so a recording that finishes inside one says
+  nothing, rather than announcing a segment it had already transcribed. Short
+  calls are most calls.
+
+  Contributed by @agu2347.
+
 - **`stenos --recover` transcribes a recording its process never finished.** A
   killed process or a lost power supply leaves the `.partial` directory behind,
   and it describes itself: the samples, the channel, the moment the call began,
