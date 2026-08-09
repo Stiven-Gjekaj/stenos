@@ -48,6 +48,7 @@ from .upstream import (
     receive_repair_state,
     recover_decoded_audio,
     recover_flushed_packets,
+    take_recovered_frames,
     take_skipped_frames,
     tolerate_double_stop,
     tolerate_undecodable_frames,
@@ -645,6 +646,16 @@ async def finish_recording(
     # recording, so leaving it standing makes the next recording report these
     # frames as its own.
     skipped = take_skipped_frames()
+
+    # Logged rather than posted. Recovered packets are audio the repairs kept
+    # rather than anything the caller has to act on, and the count has never
+    # been surfaced anywhere despite being kept since the repair was written.
+    recovered = take_recovered_frames()
+    if recovered:
+        log.info(
+            "Recovered %d packets a jitter buffer flush would have discarded.",
+            recovered,
+        )
     if skipped:
         # A gap in a transcript should have a stated cause rather than looking
         # like a pause in the conversation.

@@ -118,6 +118,12 @@ sections below are therefore headed by the series rather than by one version.
   and a transcript with no gaps was described as having them. A recording takes
   the count now and leaves nothing behind for the next one.
 
+- **Nothing reported the packets the repairs recovered.** The jitter buffer
+  repair has counted what it saved since it was written, and the count was
+  exported, tested, and read by nothing, so how much audio it kept was
+  invisible. A finished recording logs it, and takes it the same way the
+  skipped count is taken so the next recording does not claim it too.
+
 ### Added
 
 - **Audio can be written to disk.** `write_speaker_wav` lays one participant's

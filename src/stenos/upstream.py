@@ -80,6 +80,7 @@ __all__ = [
     "recover_flushed_packets",
     "recovered_frames",
     "skipped_frames",
+    "take_recovered_frames",
     "take_skipped_frames",
     "tolerate_double_stop",
     "tolerate_undecodable_frames",
@@ -665,6 +666,17 @@ _HELD = "_stenos_held_packets"
 
 _recovered = 0
 _flush_patched = False
+
+
+def take_recovered_frames() -> int:
+    """How many packets have been recovered, and start counting again.
+
+    Process wide for the same reason the skipped count is, and taken for the
+    same reason: a recording that reports it should report its own.
+    """
+    global _recovered
+    taken, _recovered = _recovered, 0
+    return taken
 
 
 def recovered_frames() -> int:

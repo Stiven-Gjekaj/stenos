@@ -1130,3 +1130,25 @@ async def test_a_second_recording_does_not_inherit_the_first_skip_count(
 
     assert "4 packets would not decode" in messages[0]
     assert "would not decode" not in messages[1]
+
+
+async def test_a_recording_logs_the_packets_the_repairs_recovered(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    # The count has been kept since the repair was written and surfaced
+    # nowhere, so how much audio it saved was invisible.
+    monkeypatch.setattr(bot_module, "load_backend", lambda *a, **k: MockBackend(texts=["a line"]))
+    monkeypatch.setattr(upstream, "_recovered", 12, raising=False)
+    bot = make_bot(tmp_path)
+    channel = FakeVoiceChannel(2, "general", [])
+    author = FakeMember(11, "Alpha", channel=channel)
+    channel.members = [author]
+    await command(bot, "start")(FakeContext(1, author))
+    feed(bot.sessions[1])
+
+    with caplog.at_level(logging.INFO, logger="stenos"):
+        await command(bot, "stop")(FakeContext(1, author))
+
+    assert any("Recovered 12 packets" in message for message in caplog.messages)
+    # Taken, so the next recording does not claim them too.
+    assert upstream.recovered_frames() == 0
