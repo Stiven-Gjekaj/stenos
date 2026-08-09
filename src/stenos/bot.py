@@ -23,7 +23,13 @@ from .audio import TARGET_SAMPLE_RATE, Segment, prepare_segments, write_speaker_
 from .config import Config, ConfigError, certificate_bundle, load_config
 from .integrity import check_recording
 from .sink import OPUS_PATH_VARIABLE, TimestampedSink, bundle_directory, ensure_opus
-from .spill import SPILL_SUFFIX, SpillWriter
+from .spill import (
+    SPILL_SUFFIX,
+    SpilledRecording,
+    SpillWriter,
+    partial_recordings,
+    read_spill,
+)
 from .transcribe import (
     BackendUnavailableError,
     ProgressCallback,
@@ -1097,6 +1103,75 @@ def describe_environment(config: Config) -> str:
     return "\n".join(lines)
 
 
+def recover_recording(found: SpilledRecording, config: Config) -> RecordingResult:
+    """Transcribe a recording its own process never finished.
+
+    The audio is read back into segments and put through the same pipeline a
+    live recording ends with, so a recovered transcript is the same file, named
+    the same way, as the one the call would have produced. Nothing about the
+    directory says which participant said what beyond the identifiers, which is
+    why the manifest carries the names.
+    """
+    sink = TimestampedSink()
+    for item in found.segments:
+        # Appended rather than written through, because write places a packet on
+        # a clock and these already carry the offsets the call gave them.
+        sink._segments.append(
+            Segment(
+                user_id=item.user_id,
+                start=item.start,
+                pcm=bytearray(found.audio_of(item)),
+                sample_rate=found.sample_rate,
+            )
+        )
+    return run_pipeline(
+        sink,
+        found.names,
+        channel_name=found.channel,
+        config=config,
+        backend=load_backend(config.whisper_backend, config.whisper_model),
+        recorded_at=found.started_at,
+    )
+
+
+def recover(config: Config) -> int:
+    """Transcribe every recording left behind by a process that did not finish.
+
+    Reports rather than raises, per directory, because one unreadable manifest
+    among several is not a reason to leave the rest where they are.
+    """
+    left = partial_recordings(config.output_dir)
+    if not left:
+        print(f"Nothing to recover in {config.output_dir}.")  # noqa: T201  this is the output
+        return 0
+
+    failed = 0
+    for directory in left:
+        found = read_spill(directory)
+        if found is None:
+            log.warning("%s holds no recording this version can read.", directory)
+            failed += 1
+            continue
+        log.info(
+            "Recovering %s from %s: %d segments.",
+            found.channel,
+            directory,
+            len(found.segments),
+        )
+        try:
+            result = recover_recording(found, config)
+        except Exception:
+            log.exception("Could not transcribe %s, so it is left where it is.", directory)
+            failed += 1
+            continue
+        print(f"{directory} -> {result.transcript_path}")  # noqa: T201  this is the output
+        for child in sorted(directory.glob("*")):
+            child.unlink(missing_ok=True)
+        directory.rmdir()
+
+    return 1 if failed else 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Entry point for the stenos command."""
     parser = argparse.ArgumentParser(
@@ -1111,6 +1186,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--check",
         action="store_true",
         help="report the resolved configuration and exit without connecting",
+    )
+    parser.add_argument(
+        "--recover",
+        action="store_true",
+        help="transcribe recordings left behind by a process that did not finish",
     )
     parser.add_argument(
         "--log-level",
@@ -1133,6 +1213,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.check:
         print(describe_environment(config))  # noqa: T201  the report is this command's output
         return 0
+
+    if args.recover:
+        return recover(config)
 
     if not ensure_opus():
         log.warning(

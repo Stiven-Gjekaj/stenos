@@ -9,7 +9,7 @@ _One timestamped, speaker-attributed transcript. No audio leaves the machine_
 <p align="center">
   <img src="https://img.shields.io/badge/Python-3.11%20to%203.13-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python 3.11 to 3.13"/>
   <img src="https://img.shields.io/badge/dependencies-4_direct-007ec6?style=for-the-badge" alt="Four direct runtime dependencies"/>
-  <img src="https://img.shields.io/badge/tests-660_passing-427819?style=for-the-badge" alt="660 tests passing"/>
+  <img src="https://img.shields.io/badge/tests-665_passing-427819?style=for-the-badge" alt="665 tests passing"/>
 </p>
 
 <p align="center">
@@ -413,9 +413,9 @@ becomes text, and text becomes one ordered transcript.
 | **Verification** | integrity.py | 116 | Separates a recording that captured nothing from a call in which nobody spoke |
 | **Transcription** | transcribe.py | 444 | Backend protocol, mlx and faster-whisper implementations, and the segment loop |
 | **Output** | transcript.py | 278 | Merges, orders, and writes the transcript and its sidecar portably |
-| **Commands** | bot.py | 1173 | Slash commands, session state, the offline pipeline, and the CLI |
+| **Commands** | bot.py | 1256 | Slash commands, session state, the offline pipeline, and the CLI |
 | **Configuration** | config.py | 333 | Validated environment parsing and platform-aware backend resolution |
-| **Total** | **12 files** | **4757** | Plus 7546 lines of tests |
+| **Total** | **12 files** | **4840** | Plus 7641 lines of tests |
 
 ```
 src/stenos/      the bot (sink, transport, audio, transcription, output, commands)

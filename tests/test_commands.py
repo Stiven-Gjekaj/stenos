@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import signal
 import sys
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -16,9 +18,10 @@ from discord.client import _cancel_tasks as cancel_tasks
 
 from stenos import bot as bot_module
 from stenos import upstream
+from stenos.audio import TARGET_SAMPLE_RATE
 from stenos.bot import build_bot
 from stenos.config import Config
-from stenos.spill import partial_recordings
+from stenos.spill import SpillWriter, partial_recordings
 from stenos.transcribe import BackendUnavailableError, MockBackend
 
 
@@ -1424,3 +1427,95 @@ async def test_the_ceiling_that_ends_a_recording_is_the_disk_when_it_can_spill(
 
     assert session.sink.spills is True
     assert bot.ceiling(session) == (bot.config.max_disk_mb, "MAX_DISK_MB")
+
+
+# Recovery. A process that was killed leaves its audio and a manifest naming
+# what it holds, which is the reason the format describes itself.
+
+
+def spilled_call(tmp_path: Path, *, channel: str = "general") -> Path:
+    """A directory of the shape a killed process leaves behind."""
+    started = datetime(2026, 8, 9, 15, 0, 0, tzinfo=UTC)
+    directory = tmp_path / f"stenos-{channel}-20260809T150000Z.partial"
+    store = SpillWriter(
+        directory, channel=channel, started_at=started, sample_rate=TARGET_SAMPLE_RATE
+    )
+    store.remember(11, "Alpha")
+    store.remember(22, "Bravo")
+    store.append(11, 0.0, b"\x00\x04" * 8000)
+    store.append(22, 4.0, b"\x00\x04" * 8000)
+    store.close()
+    return directory
+
+
+def test_recovering_writes_the_transcript_the_call_would_have(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(bot_module, "load_backend", lambda *a, **k: MockBackend(texts=["a line"]))
+    directory = spilled_call(tmp_path)
+
+    assert bot_module.recover(Config(discord_token="x", output_dir=tmp_path)) == 0
+
+    written = list(tmp_path.glob("*.txt"))
+    assert len(written) == 1
+    body = written[0].read_text(encoding="utf-8")
+    # Named from the manifest, which is why the names are recorded in it.
+    assert "Alpha" in body
+    assert "Bravo" in body
+    assert str(directory) in capsys.readouterr().out
+    # Taken away, so recovering twice does not transcribe it twice.
+    assert not directory.exists()
+
+
+def test_recovering_keeps_the_offsets_the_call_had(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The audio is appended per speaker, so the file says nothing about when
+    # anybody spoke. Only the manifest does.
+    monkeypatch.setattr(bot_module, "load_backend", lambda *a, **k: MockBackend(texts=["a line"]))
+    spilled_call(tmp_path)
+
+    bot_module.recover(Config(discord_token="x", output_dir=tmp_path))
+
+    sidecar = json.loads(next(tmp_path.glob("*.json")).read_text(encoding="utf-8"))
+    assert [segment["start"] for segment in sidecar["segments"]] == [0.0, 4.0]
+    assert sidecar["channel"] == "general"
+
+
+def test_recovering_nothing_is_not_a_failure(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert bot_module.recover(Config(discord_token="x", output_dir=tmp_path)) == 0
+    assert "Nothing to recover" in capsys.readouterr().out
+
+
+def test_a_directory_that_cannot_be_read_is_reported_and_left_alone(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    # One unreadable manifest is not a reason to leave the others where they are,
+    # so this reports rather than raises, and says so in the exit code.
+    directory = tmp_path / "broken.partial"
+    directory.mkdir()
+    (directory / "manifest.jsonl").write_text("not json at all\n", encoding="utf-8")
+
+    with caplog.at_level(logging.WARNING, logger="stenos"):
+        assert bot_module.recover(Config(discord_token="x", output_dir=tmp_path)) == 1
+
+    assert directory.exists()
+    assert any("no recording this version can read" in message for message in caplog.messages)
+
+
+def test_one_unreadable_directory_does_not_stop_the_others(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(bot_module, "load_backend", lambda *a, **k: MockBackend(texts=["a line"]))
+    broken = tmp_path / "broken.partial"
+    broken.mkdir()
+    (broken / "manifest.jsonl").write_text("not json at all\n", encoding="utf-8")
+    good = spilled_call(tmp_path)
+
+    assert bot_module.recover(Config(discord_token="x", output_dir=tmp_path)) == 1
+
+    assert not good.exists()
+    assert broken.exists()
+    assert list(tmp_path.glob("*.txt"))
