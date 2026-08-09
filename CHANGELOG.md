@@ -37,6 +37,14 @@ sections below are therefore headed by the series rather than by one version.
   itself impossible, claiming three speakers and carrying no lines, which is a
   state the pipeline cannot produce since one is derived from the other.
 
+- **A display name containing a colon made a transcript line ambiguous.** A
+  line is "[HH:MM:SS] Speaker: text", and Discord allows a colon in a display
+  name, so somebody called "Alpha: not really" produced a line with no way to
+  tell where the speaker ended. The separator is collapsed out of the rendered
+  name and nothing else is touched, so a transcript still reads as the names
+  people chose. The sidecar keeps the name exactly as it was, since structured
+  output has no format to protect.
+
 ### Added
 
 - **Audio can be written to disk.** `write_speaker_wav` lays one participant's

@@ -19,6 +19,7 @@ from .transcribe import TranscribedSegment
 __all__ = [
     "TranscriptLine",
     "build_sidecar",
+    "display_name",
     "format_timestamp",
     "merge",
     "render",
@@ -123,6 +124,26 @@ class TranscriptLine:
     text: str
 
 
+#: Collapsed out of a rendered name. A transcript line is
+#: "[HH:MM:SS] Speaker: text", so a name carrying the separator leaves no way
+#: to tell where the speaker ends, and Discord allows one in a display name.
+_SEPARATOR_IN_NAME = re.compile(r"\s*:\s*")
+
+
+def display_name(speaker: str) -> str:
+    """A speaker name that cannot be mistaken for the end of the speaker.
+
+    Only the separator is touched. Everything else survives, including
+    punctuation and non-ASCII, because a transcript should read as the names
+    the participants chose.
+    """
+    cleaned = _SEPARATOR_IN_NAME.sub(" ", speaker).strip()
+    # A name made only of separators leaves nothing. Falling back to what was
+    # given would put the separator straight back, which is the one thing this
+    # exists to prevent.
+    return cleaned or "Unknown"
+
+
 def resolve_speaker(user_id: int, names: Mapping[int, str]) -> str:
     """Name a participant from the cache captured while recording.
 
@@ -159,7 +180,8 @@ def merge(
 def render(lines: Iterable[TranscriptLine]) -> str:
     """Format merged lines as the transcript body."""
     return "".join(
-        f"{format_timestamp(line.start)} {line.speaker}: {line.text}\n" for line in lines
+        f"{format_timestamp(line.start)} {display_name(line.speaker)}: {line.text}\n"
+        for line in lines
     )
 
 

@@ -6,9 +6,13 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
+
 from stenos.transcribe import TranscribedSegment
 from stenos.transcript import (
+    TranscriptLine,
     build_sidecar,
+    display_name,
     merge,
     render,
     write_sidecar,
@@ -249,3 +253,51 @@ def test_sidecar_round_trips_non_ascii_without_escaping(tmp_path: Path) -> None:
     assert b"\\u" not in raw
     assert b"\r\n" not in raw
     assert json.loads(path.read_text(encoding="utf-8")) == payload
+
+
+@pytest.mark.parametrize(
+    ("name", "rendered"),
+    [
+        ("Alpha", "Alpha"),
+        ("Alpha: not really", "Alpha not really"),
+        ("Alpha:Bravo", "Alpha Bravo"),
+        ("Alpha : Bravo", "Alpha Bravo"),
+        # Nothing but separators leaves nothing, and falling back to what was
+        # given would put the separator straight back.
+        ("::", "Unknown"),
+        ("", "Unknown"),
+        # Everything else survives: a transcript reads as the names people chose.
+        ("Dëlta 🎧", "Dëlta 🎧"),
+        ("Alpha (host)", "Alpha (host)"),
+    ],
+)
+def test_a_rendered_name_cannot_be_mistaken_for_the_separator(name: str, rendered: str) -> None:
+    assert display_name(name) == rendered
+
+
+def test_a_name_carrying_the_separator_leaves_one_colon_in_the_line() -> None:
+    # "[HH:MM:SS] Speaker: text" has a colon in the timestamp and one after the
+    # speaker. A name carrying another leaves no way to tell where it ends.
+    line = TranscriptLine(start=1.0, user_id=11, speaker="Alpha: not really", text="hello")
+
+    body = render([line]).strip()
+
+    assert body == "[00:00:01] Alpha not really: hello"
+    assert body.count(":") == 3
+
+
+def test_the_sidecar_keeps_the_name_as_it_was() -> None:
+    # Only the transcript body has a format to protect. The sidecar is
+    # structured, so it records what the participant was actually called.
+    payload = build_sidecar(
+        [result(1.0, 11, "text")],
+        {11: "Alpha: not really"},
+        channel="general",
+        recorded_at=RECORDED_AT,
+        duration=1.0,
+        backend="mlx",
+        model="small",
+    )
+
+    assert payload["speakers"]["11"] == "Alpha: not really"
+    assert payload["segments"][0]["speaker"] == "Alpha: not really"
