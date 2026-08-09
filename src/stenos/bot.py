@@ -1218,6 +1218,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.recover:
         return recover(config)
 
+    waiting = partial_recordings(config.output_dir)
+    if waiting:
+        # Nothing else would say so. A recording the last process did not
+        # finish sits there being no transcript, and the operator's only clue
+        # is a stop message that never arrived, hours ago.
+        log.warning(
+            "%d recording(s) in %s were never finished. Transcribe them with stenos --recover.",
+            len(waiting),
+            config.output_dir,
+        )
+
     if not ensure_opus():
         log.warning(
             "libopus could not be loaded, so received audio cannot be decoded. "

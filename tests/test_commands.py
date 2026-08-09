@@ -1519,3 +1519,32 @@ def test_one_unreadable_directory_does_not_stop_the_others(
     assert not good.exists()
     assert broken.exists()
     assert list(tmp_path.glob("*.txt"))
+
+
+def test_starting_up_says_when_a_recording_was_left_unfinished(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    # The only other clue is a stop message that never arrived, hours ago.
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("DISCORD_TOKEN", "token")
+    monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
+    spilled_call(tmp_path)
+    monkeypatch.setattr(
+        bot_module, "build_bot", lambda config: SimpleNamespace(run=lambda _t: None)
+    )
+    # The repairs patch py-cord and attach a log filter for the lifetime of the
+    # process, which outlives this test and changes what the next one finds.
+    for repair in (
+        "apply_receive_repair",
+        "recover_decoded_audio",
+        "recover_flushed_packets",
+        "quieten_rtcp_reports",
+        "quieten_stale_receive_warning",
+        "tolerate_double_stop",
+    ):
+        monkeypatch.setattr(bot_module, repair, lambda *a, **k: True, raising=False)
+
+    with caplog.at_level(logging.WARNING, logger="stenos"):
+        bot_module.main([])
+
+    assert any("stenos --recover" in message for message in caplog.messages)
