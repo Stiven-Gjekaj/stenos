@@ -12,6 +12,13 @@ sections below are therefore headed by the series rather than by one version.
 
 ### Added
 
+- **Audio can be written to disk.** `write_speaker_wav` lays one participant's
+  segments out on the call's timeline, filling the gaps with silence, so an
+  offset in the transcript is the same offset in the file and the sidecar
+  indexes straight into it. Written a segment at a time rather than assembled
+  first, since an hour of one speaker is 58 million samples and building that
+  to write it once would cost more than the recording did.
+
 - **A schema version is written to the JSON sidecar.** `build_sidecar` now carries
   a `version: 1` field at the top level of the payload so downstream tools can
   identify the sidecar structure without probing keys.

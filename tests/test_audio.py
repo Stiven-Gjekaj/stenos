@@ -5,6 +5,8 @@ from __future__ import annotations
 import math
 import struct
 import threading
+import wave
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -20,6 +22,7 @@ from stenos.audio import (
     segment_to_audio,
     to_float32,
     to_int16,
+    write_speaker_wav,
 )
 from stenos.sink import (
     BYTES_PER_SECOND,
@@ -355,3 +358,61 @@ def test_a_snapshot_pairs_the_audio_with_the_rate_it_is_at() -> None:
     # Either pair is fine; a mixture is not. One second of audio stays one
     # second whichever side of the reduction it was read from.
     assert held / (rate * 2) == pytest.approx(1.0)
+
+
+def read_wav(path: Path) -> tuple[np.ndarray, int]:
+    with wave.open(str(path)) as handle:
+        rate = handle.getframerate()
+        data = np.frombuffer(handle.readframes(handle.getnframes()), dtype="<i2")
+    assert handle.getnchannels() == 1
+    return data, rate
+
+
+def spoken(seconds: float, *, start: float) -> Segment:
+    """A segment of audible tone at the rate a reduced segment holds."""
+    samples = int(TARGET_SAMPLE_RATE * seconds)
+    tone = (np.sin(np.arange(samples) * 0.1) * 8000).astype("<i2").tobytes()
+    return Segment(user_id=1, start=start, pcm=bytearray(tone), sample_rate=TARGET_SAMPLE_RATE)
+
+
+def test_a_speaker_wav_places_each_segment_at_its_offset(tmp_path: Path) -> None:
+    # The property worth having: an offset in the transcript is the same offset
+    # in the file, so a line can be checked against the audio it came from.
+    path = write_speaker_wav(tmp_path / "one.wav", [spoken(1.0, start=2.0), spoken(1.0, start=0.0)])
+
+    data, rate = read_wav(path)
+
+    assert rate == TARGET_SAMPLE_RATE
+    assert len(data) / rate == pytest.approx(3.0)
+    assert data[: rate // 2].any(), "the segment at zero is missing"
+    assert not data[rate : rate * 2].any(), "the gap should be silent"
+    assert data[rate * 2 : rate * 2 + 100].any(), "the segment at two seconds is missing"
+
+
+def test_a_speaker_wav_is_written_in_offset_order(tmp_path: Path) -> None:
+    # Segments arrive ordered, but nothing downstream should depend on that.
+    forwards = write_speaker_wav(
+        tmp_path / "a.wav", [spoken(0.5, start=0.0), spoken(0.5, start=1.0)]
+    )
+    backwards = write_speaker_wav(
+        tmp_path / "b.wav", [spoken(0.5, start=1.0), spoken(0.5, start=0.0)]
+    )
+
+    assert read_wav(forwards)[0].tobytes() == read_wav(backwards)[0].tobytes()
+
+
+def test_a_segment_never_reduced_is_written_at_the_rate_a_model_reads(tmp_path: Path) -> None:
+    # A recording that ended before its worker drained holds 48 kHz. The file
+    # has one rate throughout, so that segment is resampled on the way out.
+    unreduced = Segment(user_id=1, start=0.0, pcm=bytearray(MONO_BYTES_PER_SECOND))
+
+    data, rate = read_wav(write_speaker_wav(tmp_path / "mixed.wav", [unreduced]))
+
+    assert rate == TARGET_SAMPLE_RATE
+    assert len(data) == pytest.approx(TARGET_SAMPLE_RATE, rel=0.01)
+
+
+def test_a_speaker_with_no_segments_writes_an_empty_file(tmp_path: Path) -> None:
+    data, _rate = read_wav(write_speaker_wav(tmp_path / "silent.wav", []))
+
+    assert len(data) == 0

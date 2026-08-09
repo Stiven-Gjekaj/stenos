@@ -21,8 +21,10 @@ way round the two modules could not import each other. ``sink`` re-exports it.
 from __future__ import annotations
 
 import threading
+import wave
 from collections.abc import Iterable
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import numpy as np
 import numpy.typing as npt
@@ -44,6 +46,7 @@ __all__ = [
     "segment_to_audio",
     "to_float32",
     "to_int16",
+    "write_speaker_wav",
 ]
 
 #: Discord decodes received voice to 48 kHz, stereo, signed 16 bit little endian.
@@ -309,3 +312,47 @@ def prepare_segments(
     reach the model rather than filtered out of the transcript afterwards.
     """
     return [segment for segment in segments if segment.duration >= min_segment]
+
+
+def write_speaker_wav(
+    path: Path,
+    segments: Iterable[Segment],
+    *,
+    sample_rate: int = TARGET_SAMPLE_RATE,
+) -> Path:
+    """Write one participant's segments to a WAV, laid out on the call's timeline.
+
+    Silence fills the gaps between segments, so an offset in the transcript is
+    the same offset in the file and the sidecar indexes into it directly. That
+    is what makes the file worth keeping: a line can be checked against the
+    audio it came from without hunting for it.
+
+    Written a segment at a time rather than assembled first. An hour of one
+    speaker is 58 million samples, and building that as float32 to write it
+    once would cost more memory than the recording it came from.
+
+    Segments belonging to one speaker do not overlap, since a segment closes
+    before the next one opens. One that did would be appended where it falls
+    rather than mixed, which is wrong but not silently: the file would run
+    longer than the call.
+    """
+    ordered = sorted(segments, key=lambda segment: segment.start)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    with wave.open(str(path), "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(DISCORD_SAMPLE_WIDTH)
+        handle.setframerate(sample_rate)
+
+        written = 0
+        for segment in ordered:
+            gap = max(0, round(segment.start * sample_rate) - written)
+            if gap:
+                handle.writeframes(bytes(gap * DISCORD_SAMPLE_WIDTH))
+                written += gap
+
+            audio = segment_to_audio(segment)
+            handle.writeframes(to_int16(audio))
+            written += int(audio.size)
+
+    return path
