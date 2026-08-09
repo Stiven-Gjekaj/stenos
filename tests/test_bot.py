@@ -296,8 +296,9 @@ def test_the_environment_report_says_when_it_cannot_write(tmp_path: Path) -> Non
 
     assert "CANNOT BE WRITTEN" in report
     # The report carries whatever the platform raised rather than a sentence of
-    # its own, and the platforms disagree: POSIX refuses a directory under a
-    # file as NotADirectoryError, Windows as FileExistsError. What has to hold
-    # everywhere is that the refusal names the error and says something.
+    # its own, and the platforms disagree about what a directory under a file
+    # is: POSIX raises NotADirectoryError, and Windows raises something else,
+    # observed only as this assertion failing there. What has to hold on both
+    # is that the refusal names an error and says something.
     refusal = re.search(r"CANNOT BE WRITTEN \((\w+Error): (\S.*)\)", report)
     assert refusal is not None, report
