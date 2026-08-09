@@ -191,6 +191,7 @@ def build_sidecar(
     """
     ordered = sorted(results, key=lambda result: (result.start, result.user_id))
     return {
+        "version": 1,
         "channel": channel,
         "recorded_at": recorded_at.isoformat(),
         "duration": round(duration, 3),

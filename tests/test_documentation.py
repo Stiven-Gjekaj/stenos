@@ -198,6 +198,16 @@ def package_symbols() -> set[str]:
                 found.add(node.name)
             elif isinstance(node, ast.Assign):
                 found |= {target.id for target in node.targets if isinstance(target, ast.Name)}
+            elif isinstance(node, ast.Dict):
+                for key in node.keys:
+                    if isinstance(key, ast.Constant) and isinstance(key.value, str):
+                        found.add(key.value)
+            elif (
+                isinstance(node, ast.Subscript)
+                and isinstance(node.slice, ast.Constant)
+                and isinstance(node.slice.value, str)
+            ):
+                found.add(node.slice.value)
     return found
 
 
