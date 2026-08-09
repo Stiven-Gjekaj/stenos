@@ -124,8 +124,8 @@ it immediately, and let the short transcription pull the weights.
 
 ## The recording stopped on its own
 
-A recording ends on its own for one of three reasons, and each says which in
-the message it posts.
+A recording ends on its own for one of four reasons, and each says which in the
+message it posts.
 
 **The voice connection was lost.** The host lost its network, or the bot was
 kicked from the channel. Everything captured before that point is transcribed
@@ -140,10 +140,21 @@ this call's speech under the other channel's name.
 **The buffer limit was reached.** `MAX_BUFFER_MB` of audio was held. Raise it,
 or set it to `0` on a host with the memory to spare.
 
-**The process died.** This is the one with no message, which is what makes a
-missing stop message the signal. The realistic cause is the host going to
-sleep. See the operational notes in the [README](../README.md) for the sleep
-and power settings each platform needs for an unattended run: in short,
+**The process was asked to stop.** A restart, a `systemctl stop`, or Ctrl+C.
+The recording is finished on the way out rather than lost: it is transcribed,
+written, and reported, and only then does the process exit. That takes as long
+as transcription takes, which can be minutes, so a service manager configured
+to kill rather than wait will still lose it. Give it room:
+
+```
+TimeoutStopSec=1800
+```
+
+**The process died.** Killed outright, or the host lost power. This is the one
+with no message, which is what makes a missing stop message the signal, and the
+one case where the recording is genuinely gone. The realistic cause is the host
+going to sleep. See the operational notes in the [README](../README.md) for the
+sleep and power settings each platform needs for an unattended run: in short,
 `caffeinate -is` on macOS with the lid open and mains power, masked sleep
 targets on Linux, and `powercfg` with the lid action set to do nothing on
 Windows.

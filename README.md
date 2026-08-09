@@ -96,6 +96,7 @@ fanless laptop that will thermally throttle under sustained inference.
 - Audio reduced to what a model reads as each segment closes, so an hour holds 115 MB
 - A recording that outgrows its buffer stops itself rather than the host
 - A lost voice connection ends the recording and keeps what it captured
+- A recording in progress is finished on shutdown rather than lost to a restart
 - Five py-cord defects that lose received audio or end a recording, repaired
 
 </td>
@@ -264,7 +265,10 @@ sudo systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.ta
 ```
 
 Run under a systemd user service with `Restart=on-failure`, and set
-`HandleLidSwitch=ignore` in `/etc/systemd/logind.conf`.
+`HandleLidSwitch=ignore` in `/etc/systemd/logind.conf`. Set `TimeoutStopSec`
+generously, to 1800 or more: a stop signal finishes the recording in progress
+before exiting, and transcribing an hour of speech on a CPU backend takes
+minutes. A service manager that kills rather than waits loses the call.
 
 **Windows.** Never sleep while plugged in, and set the lid action to **Do
 nothing** under Power Options:

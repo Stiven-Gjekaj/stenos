@@ -195,6 +195,13 @@ sections below are therefore headed by the series rather than by one version.
   unsure from one that was never asked, and a reader of the older shape sees no
   change.
 
+- **The operational notes cover shutdown.** The troubleshooting page listed a
+  dead process as the only silent ending; a process asked to stop is now a
+  separate case with a different answer, since the recording survives it. Both
+  it and the README ask for a stop timeout that allows for transcription,
+  because a service manager that kills rather than waits is the one thing that
+  can still lose a call this way.
+
 - **Audio can be written to disk.** `write_speaker_wav` lays one participant's
   segments out on the call's timeline, filling the gaps with silence, so an
   offset in the transcript is the same offset in the file and the sidecar
