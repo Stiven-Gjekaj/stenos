@@ -712,3 +712,39 @@ def test_a_segment_still_being_written_to_is_left_in_memory(tmp_path: Path) -> N
     sink.write(FRAME, 1)
 
     assert latest.held() > before
+
+
+def test_a_segment_the_reducer_has_not_reached_is_reduced_before_it_moves(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The backlog is closed but not necessarily reduced: the worker runs behind
+    # the router by design. Spilled as it arrived, a segment costs three times
+    # the disk, and then reduce stamps 16 kHz over 48 kHz samples that are
+    # already written, which is three times too long and transcribes as nothing.
+    real = Segment.reduce
+
+    def slow(self: Segment) -> None:
+        time.sleep(0.05)
+        real(self)
+
+    monkeypatch.setattr(Segment, "reduce", slow)
+    store = store_for(tmp_path)
+    arrivals = [index * 5.0 for index in range(8)]
+    sink = TimestampedSink(
+        segment_gap=0.4,
+        clock=ScriptedClock(arrivals),
+        storage=store,
+        spill_above=1,
+    )
+    for _ in arrivals:
+        sink.write(FRAME, 1)
+    sink.cleanup()
+
+    monkeypatch.undo()
+    spilled = [segment for segment in sink.segments() if segment.spill is not None]
+    assert spilled
+    for segment in spilled:
+        assert segment.sample_rate == TARGET_SAMPLE_RATE
+        # What a reduced 20 ms frame measures, rather than the 48 kHz original.
+        assert segment.spill is not None
+        assert segment.spill.length == len(FRAME) // 2 // 3

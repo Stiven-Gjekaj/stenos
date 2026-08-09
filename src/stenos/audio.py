@@ -254,9 +254,14 @@ class Segment:
         from the pair of them and a reader arriving between the two writes would
         measure the new audio against the old rate. Idempotent, so a segment
         that has already been reduced costs nothing.
+
+        A segment that has been spilled is left alone. Its buffer is empty, so
+        there is nothing here to resample, and stamping the rate anyway would
+        leave it claiming 16 kHz over samples written to disk at 48 kHz, which
+        is three times too long and transcribes as nothing recognisable.
         """
         with self._lock:
-            if self.sample_rate == TARGET_SAMPLE_RATE:
+            if self.sample_rate == TARGET_SAMPLE_RATE or self.spill is not None:
                 return
             reduced = downsample(self.pcm)
             self.pcm = bytearray(reduced)
@@ -318,7 +323,7 @@ class Segment:
         with self._lock:
             if self.spill is not None or not self.pcm:
                 return False
-            self.spill = writer.append(self.user_id, self.start, bytes(self.pcm))
+            self.spill = writer.append(self.user_id, self.start, bytes(self.pcm), self.sample_rate)
             self.pcm = bytearray()
             return True
 

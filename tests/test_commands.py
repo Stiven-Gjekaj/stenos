@@ -1442,8 +1442,8 @@ def spilled_call(tmp_path: Path, *, channel: str = "general") -> Path:
     )
     store.remember(11, "Alpha")
     store.remember(22, "Bravo")
-    store.append(11, 0.0, b"\x00\x04" * 8000)
-    store.append(22, 4.0, b"\x00\x04" * 8000)
+    store.append(11, 0.0, b"\x00\x04" * 8000, TARGET_SAMPLE_RATE)
+    store.append(22, 4.0, b"\x00\x04" * 8000, TARGET_SAMPLE_RATE)
     store.close()
     return directory
 

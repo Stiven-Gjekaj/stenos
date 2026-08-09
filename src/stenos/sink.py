@@ -365,6 +365,11 @@ class TimestampedSink(Sink):
             self._storage.directory,
         )
         for settled in self._settled():
+            # Reduced first. These are closed but the worker may not have
+            # reached them yet, and spilling one before it does writes three
+            # times the samples and leaves it on the disk at the rate it
+            # arrived at.
+            settled.reduce()
             settled.spill_to(self._storage)
 
     def _reduce_closed(self) -> None:

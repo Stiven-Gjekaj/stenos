@@ -1122,7 +1122,7 @@ def recover_recording(found: SpilledRecording, config: Config) -> RecordingResul
                 user_id=item.user_id,
                 start=item.start,
                 pcm=bytearray(found.audio_of(item)),
-                sample_rate=found.sample_rate,
+                sample_rate=item.sample_rate,
             )
         )
     return run_pipeline(

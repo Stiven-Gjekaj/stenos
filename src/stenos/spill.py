@@ -78,6 +78,7 @@ class SpilledSegment:
     start: float
     offset: int
     length: int
+    sample_rate: int
     silent: bool
 
 
@@ -190,8 +191,15 @@ class SpillWriter:
             if self._manifest is not None:
                 self._record({"record": "speaker", "user_id": user_id, "name": name})
 
-    def append(self, user_id: int, start: float, audio: bytes) -> Spilled:
-        """Write one segment's samples and describe them, in that order."""
+    def append(self, user_id: int, start: float, audio: bytes, rate: int) -> Spilled:
+        """Write one segment's samples and describe them, in that order.
+
+        The rate belongs to the segment rather than to the recording. Audio is
+        reduced when a segment closes and spilled when memory runs short, and
+        those are different moments: a segment can reach the disk still at the
+        rate it arrived at. Recorded here, a recovery reads back what was
+        actually written instead of what the call was expected to hold.
+        """
         with self._lock:
             if self._closed:
                 raise ValueError("this recording's storage is already closed")
@@ -210,6 +218,7 @@ class SpillWriter:
                     "start": start,
                     "offset": offset,
                     "length": len(audio),
+                    "rate": rate,
                     "silent": silent,
                 }
             )
@@ -305,6 +314,9 @@ def read_spill(directory: Path) -> SpilledRecording | None:
                     start=float(payload["start"]),
                     offset=offset,
                     length=length,
+                    # Falls back to the recording's rate for a manifest written
+                    # before the rate travelled with each segment.
+                    sample_rate=int(payload.get("rate", header["sample_rate"] if header else 0)),
                     silent=bool(payload["silent"]),
                 )
             )

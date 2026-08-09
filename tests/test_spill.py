@@ -33,8 +33,8 @@ def writer(directory: Path, *, sample_rate: int = 16000) -> SpillWriter:
 def test_a_segment_is_readable_at_the_offset_it_reports(tmp_path: Path) -> None:
     store = writer(tmp_path / "call.partial")
 
-    first = store.append(11, 0.0, SPEECH)
-    second = store.append(11, 4.0, SILENCE)
+    first = store.append(11, 0.0, SPEECH, 16000)
+    second = store.append(11, 4.0, SILENCE, 16000)
     store.close()
 
     assert read_audio(first) == SPEECH
@@ -46,8 +46,8 @@ def test_a_segment_is_readable_at_the_offset_it_reports(tmp_path: Path) -> None:
 def test_each_participant_gets_their_own_file(tmp_path: Path) -> None:
     store = writer(tmp_path / "call.partial")
 
-    alpha = store.append(11, 0.0, SPEECH)
-    bravo = store.append(22, 0.0, SILENCE)
+    alpha = store.append(11, 0.0, SPEECH, 16000)
+    bravo = store.append(22, 0.0, SILENCE, 16000)
     store.close()
 
     assert alpha.path != bravo.path
@@ -60,16 +60,16 @@ def test_silence_is_decided_while_the_samples_are_in_hand(tmp_path: Path) -> Non
     # the case that has to read every byte because nothing short circuits.
     store = writer(tmp_path / "call.partial")
 
-    assert store.append(11, 0.0, SILENCE).silent is True
-    assert store.append(11, 1.0, SPEECH).silent is False
+    assert store.append(11, 0.0, SILENCE, 16000).silent is True
+    assert store.append(11, 1.0, SPEECH, 16000).silent is False
 
 
 def test_a_finished_recording_is_recovered_whole(tmp_path: Path) -> None:
     store = writer(tmp_path / "call.partial")
     store.remember(11, "Alpha")
     store.remember(22, "Bravo")
-    store.append(11, 0.0, SPEECH)
-    store.append(22, 4.0, SPEECH)
+    store.append(11, 0.0, SPEECH, 16000)
+    store.append(22, 4.0, SPEECH, 16000)
     store.close()
 
     found = read_spill(tmp_path / "call.partial")
@@ -87,9 +87,9 @@ def test_segments_come_back_in_call_order_rather_than_write_order(tmp_path: Path
     # One participant's segments are written as they close, so two speakers
     # interleave in the manifest in an order the call does not have.
     store = writer(tmp_path / "call.partial")
-    store.append(11, 9.0, SPEECH)
-    store.append(22, 3.0, SPEECH)
-    store.append(11, 6.0, SPEECH)
+    store.append(11, 9.0, SPEECH, 16000)
+    store.append(22, 3.0, SPEECH, 16000)
+    store.append(11, 6.0, SPEECH, 16000)
     store.close()
 
     found = read_spill(tmp_path / "call.partial")
@@ -103,8 +103,8 @@ def test_a_torn_final_line_costs_one_segment_and_not_the_recording(tmp_path: Pat
     directory = tmp_path / "call.partial"
     store = writer(directory)
     store.remember(11, "Alpha")
-    store.append(11, 0.0, SPEECH)
-    store.append(11, 4.0, SPEECH)
+    store.append(11, 0.0, SPEECH, 16000)
+    store.append(11, 4.0, SPEECH, 16000)
     store.close()
 
     manifest = directory / MANIFEST_NAME
@@ -123,8 +123,8 @@ def test_samples_that_never_reached_the_disk_are_dropped(tmp_path: Path) -> None
     # manifest describes more than the audio file actually holds.
     directory = tmp_path / "call.partial"
     store = writer(directory)
-    store.append(11, 0.0, SPEECH)
-    store.append(11, 4.0, SPEECH)
+    store.append(11, 0.0, SPEECH, 16000)
+    store.append(11, 4.0, SPEECH, 16000)
     store.close()
 
     audio = directory / "11.pcm"
@@ -147,7 +147,7 @@ def test_a_manifest_from_a_later_format_is_refused(tmp_path: Path) -> None:
     # Better to say nothing than to read a layout this version predates.
     directory = tmp_path / "call.partial"
     store = writer(directory)
-    store.append(11, 0.0, SPEECH)
+    store.append(11, 0.0, SPEECH, 16000)
     store.close()
 
     manifest = directory / MANIFEST_NAME
@@ -163,10 +163,10 @@ def test_a_manifest_from_a_later_format_is_refused(tmp_path: Path) -> None:
 
 def test_unfinished_recordings_are_found_and_finished_ones_are_not(tmp_path: Path) -> None:
     kept = writer(tmp_path / "one.partial")
-    kept.append(11, 0.0, SPEECH)
+    kept.append(11, 0.0, SPEECH, 16000)
     kept.close()
     gone = writer(tmp_path / "two.partial")
-    gone.append(22, 0.0, SPEECH)
+    gone.append(22, 0.0, SPEECH, 16000)
     gone.discard()
     (tmp_path / "not-a-recording.partial").mkdir()
 
@@ -175,8 +175,8 @@ def test_unfinished_recordings_are_found_and_finished_ones_are_not(tmp_path: Pat
 
 def test_discarding_removes_the_directory_entirely(tmp_path: Path) -> None:
     store = writer(tmp_path / "call.partial")
-    store.append(11, 0.0, SPEECH)
-    store.append(22, 0.0, SPEECH)
+    store.append(11, 0.0, SPEECH, 16000)
+    store.append(22, 0.0, SPEECH, 16000)
 
     store.discard()
 
@@ -188,7 +188,7 @@ def test_writing_after_closing_is_refused_rather_than_silently_lost(tmp_path: Pa
     store.close()
 
     with pytest.raises(ValueError, match="already closed"):
-        store.append(11, 0.0, SPEECH)
+        store.append(11, 0.0, SPEECH, 16000)
 
 
 def test_closing_twice_is_harmless(tmp_path: Path) -> None:
@@ -204,7 +204,7 @@ def test_a_name_learned_after_the_audio_is_still_recorded(tmp_path: Path) -> Non
     # participant can speak before the guild has told the bot who they are.
     directory = tmp_path / "call.partial"
     store = writer(directory)
-    store.append(11, 0.0, SPEECH)
+    store.append(11, 0.0, SPEECH, 16000)
     store.remember(11, "Alpha")
     store.close()
 
@@ -244,10 +244,27 @@ def test_a_name_learned_before_the_first_spill_is_still_recorded(tmp_path: Path)
     directory = tmp_path / "call.partial"
     store = writer(directory)
     store.remember(11, "Alpha")
-    store.append(11, 0.0, SPEECH)
+    store.append(11, 0.0, SPEECH, 16000)
     store.close()
 
     found = read_spill(directory)
 
     assert found is not None
     assert found.names == {11: "Alpha"}
+
+
+def test_the_rate_travels_with_each_segment_not_with_the_call(tmp_path: Path) -> None:
+    # A segment is reduced when it closes and spilled when memory runs short,
+    # and those are different moments, so one can reach the disk still at the
+    # rate it arrived at. Read back against the call's rate it would be three
+    # times too long and transcribe as nothing recognisable.
+    directory = tmp_path / "call.partial"
+    store = writer(directory)
+    store.append(11, 0.0, SPEECH, 16000)
+    store.append(11, 4.0, SPEECH, 48000)
+    store.close()
+
+    found = read_spill(directory)
+
+    assert found is not None
+    assert [segment.sample_rate for segment in found.segments] == [16000, 48000]
