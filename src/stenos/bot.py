@@ -18,7 +18,7 @@ import discord
 from discord.ext import tasks
 
 from . import __version__
-from .audio import prepare_segments
+from .audio import Segment, prepare_segments, write_speaker_wav
 from .config import Config, ConfigError, certificate_bundle, load_config
 from .integrity import check_recording
 from .sink import OPUS_PATH_VARIABLE, TimestampedSink, bundle_directory, ensure_opus
@@ -34,8 +34,11 @@ from .transcript import (
     TranscriptLine,
     build_sidecar,
     merge,
+    resolve_speaker,
+    sanitize_filename,
     split_hms,
     transcript_paths,
+    transcript_stem,
     write_sidecar,
     write_transcript,
 )
@@ -68,6 +71,7 @@ __all__ = [
     "main",
     "register_commands",
     "run_pipeline",
+    "save_audio",
 ]
 
 
@@ -82,6 +86,8 @@ class RecordingResult:
     duration: float
     packet_count: int
     speakers: int
+    #: Written only when KEEP_AUDIO is set, one file per participant.
+    audio_paths: list[Path] = field(default_factory=list)
 
 
 def discard_audio(sink: TimestampedSink) -> None:
@@ -92,6 +98,39 @@ def discard_audio(sink: TimestampedSink) -> None:
     """
     for segment in sink.segments():
         segment.clear()
+
+
+def save_audio(
+    sink: TimestampedSink,
+    names: Mapping[int, str],
+    *,
+    output_dir: Path,
+    channel_name: str,
+    recorded_at: datetime,
+) -> list[Path]:
+    """Write each participant's audio beside the transcript, one file each.
+
+    Named after the speaker as well as their identifier: the name is what makes
+    a directory of these readable, and the identifier is what keeps two people
+    called the same thing in separate files.
+    """
+    stem = transcript_stem(channel_name, recorded_at)
+    by_speaker: dict[int, list[Segment]] = {}
+    for segment in sink.segments():
+        by_speaker.setdefault(segment.user_id, []).append(segment)
+
+    written: list[Path] = []
+    for user_id, segments in sorted(by_speaker.items()):
+        speaker = sanitize_filename(resolve_speaker(user_id, names), fallback="speaker")
+        try:
+            written.append(
+                write_speaker_wav(output_dir / f"{stem}-{speaker}-{user_id}.wav", segments)
+            )
+        except Exception:
+            # The transcript is the deliverable and it is already written. A
+            # disk that will not take the audio must not lose the text.
+            log.exception("Could not write the audio for %s", user_id)
+    return written
 
 
 def run_pipeline(
@@ -138,8 +177,21 @@ def run_pipeline(
         ),
     )
 
-    if not config.keep_audio:
-        discard_audio(sink)
+    audio_paths: list[Path] = []
+    if config.keep_audio:
+        audio_paths = save_audio(
+            sink,
+            names,
+            output_dir=config.output_dir,
+            channel_name=channel_name,
+            recorded_at=recorded_at,
+        )
+
+    # Always, now that keeping it means writing it out. Holding the buffers
+    # instead did nothing: the session is dropped the moment the command that
+    # owns it returns, so what was kept was freed a few lines later and could
+    # not be reached in between.
+    discard_audio(sink)
 
     return RecordingResult(
         transcript_path=transcript_path,
@@ -149,6 +201,7 @@ def run_pipeline(
         duration=duration,
         packet_count=packet_count,
         speakers=len({line.user_id for line in lines}),
+        audio_paths=audio_paths,
     )
 
 

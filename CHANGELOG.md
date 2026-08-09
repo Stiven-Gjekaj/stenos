@@ -19,6 +19,13 @@ sections below are therefore headed by the series rather than by one version.
   first, since an hour of one speaker is 58 million samples and building that
   to write it once would cost more than the recording did.
 
+  `KEEP_AUDIO` now writes those files, which is the setting finally doing what
+  it says. Retaining the buffers achieved nothing: the session is dropped the
+  moment the command that owns it returns, so the audio it kept was freed a few
+  lines later and could not be reached in between. The documented purpose,
+  comparing models on the same recording, was unreachable. The buffers are now
+  released either way, since keeping means writing.
+
 - **A schema version is written to the JSON sidecar.** `build_sidecar` now carries
   a `version: 1` field at the top level of the payload so downstream tools can
   identify the sidecar structure without probing keys.

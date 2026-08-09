@@ -172,9 +172,19 @@ wants; give one an absolute path. A leading `~` is expanded.
 
 *Default: `false`.*
 
-Buffered audio is held in memory and released once the transcript is written.
-Set this to `true` to keep it, which is useful when comparing models on the
-same recording.
+Write the recorded audio to `OUTPUT_DIR` alongside the transcript, one WAV per
+participant, named `<stem>-<speaker>-<user id>.wav`.
+
+Each file is laid out on the call's timeline, with silence filling the gaps
+between that participant's segments, so an offset in the transcript is the same
+offset in the file and the sidecar indexes straight into it. That is what makes
+the audio worth keeping: a line can be checked against what it came from, a
+model can be compared against another on the same recording, and a
+misattribution can be settled by listening.
+
+The audio is 16 kHz mono, which is what a model reads, so each participant
+costs about 115 MB per hour of call. It is written after the transcript, and a
+failure to write it never costs the transcript.
 
 Accepts `true`, `1`, `yes`, `on` and their negatives, in any case.
 

@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from helpers import ScriptedClock
+from stenos import bot as bot_module
 from stenos.bot import RecordingResult, discard_audio, run_pipeline
 from stenos.config import Config
 from stenos.sink import BYTES_PER_SECOND, TimestampedSink
@@ -169,10 +170,13 @@ def test_audio_is_discarded_after_transcription(tmp_path: Path) -> None:
     assert all(len(segment.pcm) == 0 for segment in sink.segments())
 
 
-def test_audio_is_retained_when_requested(tmp_path: Path) -> None:
+def test_audio_is_written_out_when_requested(tmp_path: Path) -> None:
+    # Retaining the buffers achieved nothing: the session is dropped the moment
+    # the command that owns it returns, so what was kept could not be reached.
+    # Keeping it means writing it, one file per participant.
     sink = build_sink(speech(0.0, 11))
 
-    run_pipeline(
+    result = run_pipeline(
         sink,
         {11: "Alpha"},
         channel_name="general",
@@ -181,7 +185,55 @@ def test_audio_is_retained_when_requested(tmp_path: Path) -> None:
         recorded_at=RECORDED_AT,
     )
 
-    assert any(len(segment.pcm) > 0 for segment in sink.segments())
+    assert len(result.audio_paths) == 1
+    written = result.audio_paths[0]
+    assert written.is_file()
+    # Named for the speaker so a directory of these reads, and for the
+    # identifier so two people called the same thing stay in separate files.
+    assert written.name.endswith("-Alpha-11.wav")
+    assert written.stat().st_size > 0
+    # The buffers are released either way, now that keeping means writing.
+    assert not any(len(segment.pcm) > 0 for segment in sink.segments())
+
+
+def test_no_audio_is_written_by_default(tmp_path: Path) -> None:
+    sink = build_sink(speech(0.0, 11))
+
+    result = run_pipeline(
+        sink,
+        {11: "Alpha"},
+        channel_name="general",
+        config=config_for(tmp_path),
+        backend=MockBackend(),
+        recorded_at=RECORDED_AT,
+    )
+
+    assert result.audio_paths == []
+    assert not list(tmp_path.glob("*.wav"))
+
+
+def test_a_transcript_survives_audio_that_cannot_be_written(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The transcript is the deliverable and it is written first. A disk that
+    # will not take the audio must not take the text with it.
+    def refuse(*args: object, **kwargs: object) -> Path:
+        raise OSError("no space left on device")
+
+    monkeypatch.setattr(bot_module, "write_speaker_wav", refuse)
+    sink = build_sink(speech(0.0, 11))
+
+    result = run_pipeline(
+        sink,
+        {11: "Alpha"},
+        channel_name="general",
+        config=config_for(tmp_path, keep_audio=True),
+        backend=MockBackend(texts=["still here"]),
+        recorded_at=RECORDED_AT,
+    )
+
+    assert result.audio_paths == []
+    assert result.transcript_path.read_text(encoding="utf-8").strip().endswith("still here")
 
 
 def test_discarding_audio_keeps_the_written_transcript(tmp_path: Path) -> None:
