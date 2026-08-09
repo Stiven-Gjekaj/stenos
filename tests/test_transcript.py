@@ -301,3 +301,50 @@ def test_the_sidecar_keeps_the_name_as_it_was() -> None:
 
     assert payload["speakers"]["11"] == "Alpha: not really"
     assert payload["segments"][0]["speaker"] == "Alpha: not really"
+
+
+def test_the_sidecar_records_what_the_model_thought() -> None:
+    # A line held back as invented can then be checked against the number that
+    # held it back, rather than taken on trust.
+    payload = build_sidecar(
+        [
+            TranscribedSegment(
+                user_id=11,
+                start=1.0,
+                duration=2.0,
+                text="Thank you.",
+                suppressed="no-speech",
+                no_speech=0.9512,
+                logprob=-1.8034,
+            )
+        ],
+        NAMES,
+        channel="general",
+        recorded_at=RECORDED_AT,
+        duration=3.0,
+        backend="faster-whisper",
+        model="small",
+    )
+
+    segment = payload["segments"][0]
+    assert segment["suppressed"] == "no-speech"
+    assert segment["no_speech"] == 0.9512
+    assert segment["logprob"] == -1.8034
+
+
+def test_a_backend_that_cannot_say_leaves_the_numbers_out() -> None:
+    # Absent rather than null, so a reader can tell a model that was unsure
+    # from one that was never asked, and an older reader sees no change.
+    payload = build_sidecar(
+        [result(1.0, 11, "said something")],
+        NAMES,
+        channel="general",
+        recorded_at=RECORDED_AT,
+        duration=3.0,
+        backend="mlx",
+        model="small",
+    )
+
+    segment = payload["segments"][0]
+    assert "no_speech" not in segment
+    assert "logprob" not in segment

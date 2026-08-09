@@ -150,6 +150,11 @@ class TranscribedSegment:
     duration: float
     text: str
     suppressed: str | None = None
+    #: What the model made of it, when the backend reports it. None where it
+    #: cannot, which is what keeps the sidecar honest about the difference
+    #: between an unconfident model and one that was never asked.
+    no_speech: float | None = None
+    logprob: float | None = None
 
 
 #: Above this the model puts it at more likely than not that a segment holds no
@@ -429,6 +434,8 @@ def transcribe_segments(
                 duration=segment.duration,
                 text=text,
                 suppressed=invented_reason(text, audio, heard),
+                no_speech=heard.no_speech,
+                logprob=heard.logprob,
             )
         )
         if progress is not None:

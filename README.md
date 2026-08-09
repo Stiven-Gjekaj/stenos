@@ -9,7 +9,7 @@ _One timestamped, speaker-attributed transcript. No audio leaves the machine_
 <p align="center">
   <img src="https://img.shields.io/badge/Python-3.11%20to%203.13-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python 3.11 to 3.13"/>
   <img src="https://img.shields.io/badge/dependencies-4_direct-007ec6?style=for-the-badge" alt="Four direct runtime dependencies"/>
-  <img src="https://img.shields.io/badge/tests-623_passing-427819?style=for-the-badge" alt="623 tests passing"/>
+  <img src="https://img.shields.io/badge/tests-625_passing-427819?style=for-the-badge" alt="625 tests passing"/>
 </p>
 
 <p align="center">
@@ -407,11 +407,11 @@ becomes text, and text becomes one ordered transcript.
 | **Transport** | upstream.py | 861 | Repairs the py-cord 2.8.1 defects that lose received audio or end a recording, when they are present |
 | **Conversion** | audio.py | 363 | Downmixes and resamples to 16 kHz mono, discarding fragments too short to carry speech |
 | **Verification** | integrity.py | 111 | Separates a recording that captured nothing from a call in which nobody spoke |
-| **Transcription** | transcribe.py | 437 | Backend protocol, mlx and faster-whisper implementations, and the segment loop |
-| **Output** | transcript.py | 272 | Merges, orders, and writes the transcript and its sidecar portably |
+| **Transcription** | transcribe.py | 444 | Backend protocol, mlx and faster-whisper implementations, and the segment loop |
+| **Output** | transcript.py | 278 | Merges, orders, and writes the transcript and its sidecar portably |
 | **Commands** | bot.py | 1119 | Slash commands, session state, the offline pipeline, and the CLI |
 | **Configuration** | config.py | 323 | Validated environment parsing and platform-aware backend resolution |
-| **Total** | **11 files** | **4203** | Plus 6888 lines of tests |
+| **Total** | **11 files** | **4216** | Plus 6935 lines of tests |
 
 ```
 src/stenos/      the bot (sink, transport, audio, transcription, output, commands)

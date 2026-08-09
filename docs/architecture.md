@@ -122,6 +122,20 @@ name, because the upstream names are not uniformly suffixed:
 `backend_status` attempts only the import, never the model construction, so a
 diagnostic never downloads weights.
 
+A backend returns text, and may also say how sure it was. `recognise` asks for
+the richer answer and falls back to the plain one, so the protocol stays the
+smaller of the two: every backend can transcribe, and only some can report a no
+speech probability and a token confidence. faster-whisper does, mlx-whisper
+does not through this interface, and Apple Silicon is the primary target, so
+the measurement that stands in where a backend cannot say is not a leftover.
+
+Those two numbers are what decides whether a line was invented, when they are
+there. Whisper's decoder uses a no speech probability above 0.6 together with
+an average log probability below -1.0 to call a segment silence, and so does
+this, on the same pair of thresholds. Both have to hold: an unsure
+transcription of real speech is somebody mumbling, and a confident
+transcription of quiet speech is somebody speaking quietly.
+
 ---
 
 ## 4. Merging and writing, `transcript.py`
@@ -173,6 +187,10 @@ Alongside the transcript body, `write_sidecar` produces a JSON sidecar
   - `duration`: segment duration in seconds rounded to three decimal places
   - `text`: transcribed text
   - `suppressed`: optional string reason, present only when the segment was suppressed
+  - `no_speech`: optional probability the model gave that the segment holds no
+    speech, present only when the backend reports one
+  - `logprob`: optional average token log probability, present on the same
+    terms
 
 ---
 

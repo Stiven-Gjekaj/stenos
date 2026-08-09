@@ -189,6 +189,12 @@ sections below are therefore headed by the series rather than by one version.
   becoming a leftover. Repetition is still judged from the text, since a model
   can be confident and looping at the same time.
 
+- **The sidecar records both numbers.** A line held back as invented can be
+  checked against what held it back rather than taken on trust. They appear
+  only where the backend reported them, so a reader can tell a model that was
+  unsure from one that was never asked, and a reader of the older shape sees no
+  change.
+
 - **Audio can be written to disk.** `write_speaker_wav` lays one participant's
   segments out on the call's timeline, filling the gaps with silence, so an
   offset in the transcript is the same offset in the file and the sidecar

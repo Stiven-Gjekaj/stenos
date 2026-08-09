@@ -261,6 +261,12 @@ def _sidecar_segment(result: TranscribedSegment, names: Mapping[int, str]) -> di
     }
     if result.suppressed:
         segment["suppressed"] = result.suppressed
+    # Only where the backend reported them, so a reader can tell a model that
+    # was unsure from one that was never asked.
+    if result.no_speech is not None:
+        segment["no_speech"] = round(result.no_speech, 4)
+    if result.logprob is not None:
+        segment["logprob"] = round(result.logprob, 4)
     return segment
 
 
