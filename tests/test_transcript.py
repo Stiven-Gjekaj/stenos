@@ -176,12 +176,44 @@ def test_sidecar_carries_run_metadata() -> None:
         model="small",
     )
 
+    assert payload["version"] == 1
     assert payload["channel"] == "general"
     assert payload["recorded_at"] == "2026-08-01T16:14:43+00:00"
     assert payload["duration"] == 12.5
     assert payload["backend"] == "mlx"
     assert payload["model"] == "small"
     assert payload["speakers"] == {"11": "Alpha", "22": "Bravo"}
+
+
+def test_sidecar_schema_version_and_required_fields() -> None:
+    payload = build_sidecar(
+        [result(1.0, 11, "text")],
+        NAMES,
+        channel="general",
+        recorded_at=RECORDED_AT,
+        duration=12.5,
+        backend="mlx",
+        model="small",
+    )
+
+    required_top_level = {
+        "version",
+        "channel",
+        "recorded_at",
+        "duration",
+        "backend",
+        "model",
+        "speakers",
+        "segments",
+    }
+    assert required_top_level.issubset(payload.keys())
+    assert isinstance(payload["version"], int)
+    assert payload["version"] == 1
+
+    segment = payload["segments"][0]
+    required_segment = {"user_id", "speaker", "start", "duration", "text"}
+    assert required_segment.issubset(segment.keys())
+    assert "suppressed" not in segment
 
 
 def test_sidecar_segments_are_ordered_by_offset() -> None:

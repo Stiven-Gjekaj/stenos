@@ -8,6 +8,14 @@ of the [README](README.md). A release covers a whole series: every commit
 sharing an `X.N.V` belongs to it, and the tag is cut at the last of them. The
 sections below are therefore headed by the series rather than by one version.
 
+## 0.2.3
+
+### Added
+
+- **A schema version is written to the JSON sidecar.** `build_sidecar` now carries
+  a `version: 1` field at the top level of the payload so downstream tools can
+  identify the sidecar structure without probing keys.
+
 ## 0.2.2 (2026-08-08)
 
 A pass over the whole codebase for defects, duplication, and things that were
