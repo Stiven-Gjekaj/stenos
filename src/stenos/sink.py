@@ -311,14 +311,23 @@ class TimestampedSink(Sink):
                 log.exception("Could not reduce a closed segment")
 
     def _retire(self, segment: Segment) -> None:
-        """Hand a segment that can no longer grow to the worker."""
-        if self._reducer is None:
-            self._reducer = threading.Thread(
-                target=self._reduce_closed,
-                name=f"stenos-reducer:{id(self):#x}",
-                daemon=True,
-            )
-            self._reducer.start()
+        """Hand a segment that can no longer grow to the worker.
+
+        Starting the worker is guarded, because the two callers are different
+        threads: the router retires a segment that closed, and cleanup retires
+        whatever was still open. Unguarded, both can find no worker and both
+        start one, after which only the one that assigned last is tracked. The
+        other never receives the sentinel, so it outlives the recording and
+        cleanup's join waits on the wrong thread.
+        """
+        with self._lock:
+            if self._reducer is None:
+                self._reducer = threading.Thread(
+                    target=self._reduce_closed,
+                    name=f"stenos-reducer:{id(self):#x}",
+                    daemon=True,
+                )
+                self._reducer.start()
         self._closed.put(segment)
 
     def walk_children(self) -> list[Sink]:

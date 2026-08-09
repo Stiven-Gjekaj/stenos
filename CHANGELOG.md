@@ -10,6 +10,16 @@ sections below are therefore headed by the series rather than by one version.
 
 ## 0.2.3
 
+### Fixed
+
+- **Two threads retiring a segment at once started two reducers.** The router
+  retires a segment that closed and `cleanup` retires whatever was still open,
+  from different threads, and the check for an existing worker was not guarded.
+  Both could find none and both start one, after which only the one assigned
+  last was tracked: the other never received the sentinel, so it outlived the
+  recording and `cleanup` joined a thread that was not the one still working.
+  Demonstrated by widening the window, and now one worker either way.
+
 ### Added
 
 - **Audio can be written to disk.** `write_speaker_wav` lays one participant's

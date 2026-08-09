@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import threading
+import time
 from collections.abc import Sequence
 from itertools import pairwise
+from unittest import mock
 
 import pytest
 
@@ -476,3 +479,33 @@ def test_a_long_recording_holds_a_sixth_of_what_arrived() -> None:
     assert held_per_second == pytest.approx(BYTES_PER_SECOND / 6, rel=0.01)
     # The cap did its work: no one segment holds the whole two minutes.
     assert len(sink.segments()) == 4
+
+
+def test_only_one_reducer_is_started_when_two_threads_retire_at_once() -> None:
+    # The router retires a segment that closed and cleanup retires whatever was
+    # still open, from different threads. Unguarded, both find no worker and
+    # both start one, and only the one assigned last is tracked: the other
+    # never gets the sentinel and cleanup joins the wrong thread.
+    started: list[threading.Thread] = []
+    real = threading.Thread
+
+    class Slow(real):  # type: ignore[misc, valid-type]
+        """Slow to construct, so the check and the assignment can interleave."""
+
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            time.sleep(0.05)
+            super().__init__(*args, **kwargs)  # type: ignore[arg-type]
+            started.append(self)
+
+    sink = TimestampedSink()
+    with mock.patch.object(threading, "Thread", Slow):
+        racers = [
+            real(target=sink._retire, args=(Segment(user_id=index, start=0.0),)) for index in (1, 2)
+        ]
+        for racer in racers:
+            racer.start()
+        for racer in racers:
+            racer.join(timeout=5.0)
+
+    assert len(started) == 1
+    sink.cleanup()
