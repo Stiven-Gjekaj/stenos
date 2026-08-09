@@ -107,12 +107,20 @@ def bundled_backend() -> str | None:
     if bundle is None:
         return None
     try:
-        name = (bundle / BUNDLED_BACKEND_FILE).read_text(encoding="utf-8").strip()
+        name = (bundle / BUNDLED_BACKEND_FILE).read_text(encoding="utf-8")
     except OSError:
         return None
-    if name in VALID_BACKENDS and name != BACKEND_AUTO:
-        return name
-    return None
+
+    # Folded the way a setting is, rather than matched raw. A marker reading
+    # faster_whisper or Faster-Whisper is the same backend and used to read as
+    # no answer at all, and no answer means the platform decides: on Apple
+    # Silicon that is mlx, which the executable does not carry, which is the
+    # failure this function exists to prevent.
+    try:
+        resolved = _normalise_backend(name)
+    except ConfigError:
+        return None
+    return None if resolved == BACKEND_AUTO else resolved
 
 
 def _normalise_backend(name: str, *, setting: str | None = None) -> str:

@@ -96,6 +96,14 @@ sections below are therefore headed by the series rather than by one version.
   only be found by the default search or by naming it outright. One decision
   now, made once.
 
+- **A frozen build read its backend marker raw.** The marker naming what an
+  executable carries was matched against the known names without the folding a
+  setting of the same value gets, so `faster_whisper` or `FASTER-WHISPER` read
+  as no answer at all. No answer means the platform decides, and on Apple
+  Silicon that is mlx, which the executable does not carry: exactly the failure
+  the marker exists to prevent. It goes through the same normaliser as
+  everything else now.
+
 ### Added
 
 - **Audio can be written to disk.** `write_speaker_wav` lays one participant's
