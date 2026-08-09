@@ -198,3 +198,20 @@ def test_a_leading_tilde_in_the_output_directory_is_expanded() -> None:
 
     assert not str(expanded).startswith("~")
     assert expanded == Path.home() / "calls"
+
+
+@pytest.mark.parametrize("key", ["SEGMENT_GAP", "MIN_SEGMENT", "MAX_SEGMENT", "MAX_BUFFER_MB"])
+@pytest.mark.parametrize("value", ["nan", "NaN", "inf", "-inf", "1e400"])
+def test_a_setting_that_is_not_a_finite_number_is_refused(key: str, value: str) -> None:
+    # Every comparison against a NaN is false, so it satisfies any bound
+    # written as one and passes validation while meaning nothing. A NaN buffer
+    # limit then reaches int() on the watchdog loop and raises there, once
+    # every check, and a NaN threshold is never exceeded so nothing it guards
+    # ever fires. An infinity passes the bound honestly and means the same.
+    with pytest.raises(ConfigError, match="finite"):
+        load_config(MINIMAL_ENV | {key: value})
+
+
+def test_the_disconnect_grace_is_refused_the_same_way() -> None:
+    with pytest.raises(ConfigError, match="finite"):
+        load_config(MINIMAL_ENV | {"DISCONNECT_GRACE": "nan"})

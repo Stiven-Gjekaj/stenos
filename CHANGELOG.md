@@ -72,6 +72,14 @@ sections below are therefore headed by the series rather than by one version.
   other: the second recording's audio would land on the first recording's files
   and pair with a transcript that was not its own.
 
+- **A setting of `nan` or `inf` was accepted and then broke things.** Every
+  comparison against a NaN is false, so it satisfied a bound written as one and
+  passed validation while meaning nothing. `MAX_BUFFER_MB=nan` then reached
+  `int()` on the watchdog loop and raised there once every fifteen seconds, and
+  any NaN threshold was never exceeded, so nothing it guarded ever fired: a
+  `SEGMENT_GAP` of NaN holds a whole call in one segment. An infinity passes a
+  bound honestly and means the same. All of them are refused now, by name.
+
 ### Added
 
 - **Audio can be written to disk.** `write_speaker_wav` lays one participant's

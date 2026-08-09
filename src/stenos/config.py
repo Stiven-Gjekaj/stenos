@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 import platform
 import sys
@@ -228,6 +229,15 @@ def _read_float(env: Mapping[str, str], key: str, default: float, *, minimum: fl
         value = float(raw)
     except ValueError as exc:
         raise ConfigError(f"{key} must be a number, got {raw!r}") from exc
+
+    # Checked before the bound, because every comparison against a NaN is
+    # false and so it satisfies any bound written as one. A NaN buffer limit
+    # reaches int() on the watchdog loop and raises there, once every check,
+    # and a NaN threshold is never exceeded so nothing it guards ever fires.
+    # An infinity passes the bound honestly and means the same thing.
+    if not math.isfinite(value):
+        raise ConfigError(f"{key} must be a finite number, got {raw!r}")
+
     if value < minimum:
         raise ConfigError(f"{key} must be at least {minimum}, got {value}")
     return value
