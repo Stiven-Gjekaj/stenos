@@ -63,9 +63,11 @@ __all__ = [
     "RecordingSession",
     "StenosBot",
     "build_bot",
+    "combine_progress",
     "describe_environment",
     "describe_result",
     "discard_audio",
+    "discord_progress",
     "finish_recording",
     "format_duration",
     "log_progress",
@@ -332,6 +334,70 @@ def log_progress(every: float = PROGRESS_INTERVAL) -> ProgressCallback:
             return
         last = now
         log.info("Transcribed %d of %d segments (%.0f%%).", done, total, 100.0 * done / total)
+
+    return report
+
+
+def discord_progress(
+    channel: Any, loop: asyncio.AbstractEventLoop, every: float = PROGRESS_INTERVAL
+) -> ProgressCallback:
+    """Report transcription progress in the recording's text channel.
+
+    ``log_progress`` writes to a place nobody watching the call is looking.
+    This posts one message when transcription starts and edits it in place as
+    segments complete, so the channel shows progress rather than the silence
+    between the stop message and the eventual transcript.
+
+    ``run_pipeline`` runs on a worker thread so it does not block the gateway
+    heartbeat, and the callback it drives runs there too. Discord calls
+    belong to the event loop, so each report is handed back to it with
+    ``run_coroutine_threadsafe`` rather than awaited directly. Scheduling it
+    is fire-and-forget and every failure inside it is swallowed: a channel
+    that cannot be posted to, or a message deleted out from under an edit,
+    must not interrupt a transcription that is otherwise succeeding.
+
+    Shares ``every`` with ``log_progress`` so the two stay on one cadence
+    rather than drifting into two schedules for the same event.
+    """
+    last: float | None = None
+    # A list rather than a bare variable: the coroutine below closes over it
+    # and needs to see the message a later call stores, not the None it
+    # captured when the closure was created.
+    message: list[Any] = [None]
+
+    async def _post_or_edit(done: int, total: int) -> None:
+        text = f"Transcribing... {done}/{total} segments ({100.0 * done / total:.0f}%)"
+        try:
+            if message[0] is None:
+                message[0] = await channel.send(text)
+            else:
+                await message[0].edit(content=text)
+        except Exception:
+            log.warning("Could not update the Discord progress message.", exc_info=True)
+
+    def report(done: int, total: int) -> None:
+        nonlocal last
+        now = time.perf_counter()
+        if last is not None and done < total and now - last < every:
+            return
+        last = now
+        with contextlib.suppress(Exception):
+            asyncio.run_coroutine_threadsafe(_post_or_edit(done, total), loop)
+
+    return report
+
+
+def combine_progress(*callbacks: ProgressCallback) -> ProgressCallback:
+    """Run several progress callbacks as one.
+
+    ``run_pipeline`` takes a single ``progress`` callback. This is how
+    ``finish_recording`` reports to both the log and the channel from the
+    same calls without either callback knowing the other exists.
+    """
+
+    def report(done: int, total: int) -> None:
+        for callback in callbacks:
+            callback(done, total)
 
     return report
 
@@ -702,7 +768,10 @@ async def finish_recording(
             config=bot.config,
             backend=backend,
             recorded_at=session.started_at,
-            progress=log_progress(),
+            progress=combine_progress(
+                log_progress(),
+                discord_progress(session.text_channel, asyncio.get_running_loop()),
+            ),
         )
     except BackendUnavailableError as error:
         log.error("Transcription backend unavailable: %s", error)
