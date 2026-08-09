@@ -10,6 +10,43 @@ sections below are therefore headed by the series rather than by one version.
 
 ## 0.2.3
 
+### Added
+
+- **A recording that outgrows memory now continues on disk instead of ending.**
+  A call is held in memory until it is transcribed, at about 115 MB per hour of
+  speech, and crossing `MAX_BUFFER_MB` used to stop it and write out what it
+  had. On a server that ceiling is nine hours and never fires. On a host with a
+  gigabyte to its name it is most of a meeting, which is the machine this was
+  worst for and the machine most likely to be left running unattended.
+
+  Past the ceiling each segment moves to a `.partial` directory beside the
+  transcripts as it closes, and the memory is released, so what stays resident
+  is only the segments still being spoken. Nothing is created until that
+  happens: a recording that fits in memory still touches the disk exactly once,
+  when it writes its transcript at the end.
+
+  **`MAX_BUFFER_MB` has changed meaning.** It names where the audio lives, not
+  when the recording stops. The new `MAX_DISK_MB`, defaulting to 4096, is what
+  ends a call, and it counts what is on disk as well as what is in memory. A
+  host that set `MAX_BUFFER_MB` low deliberately, to stop long calls, wants that
+  value in `MAX_DISK_MB` now; left alone it will find its recordings running
+  longer than they used to.
+
+- **`stenos --recover` transcribes a recording its process never finished.** A
+  killed process or a lost power supply leaves the `.partial` directory behind,
+  and it describes itself: the samples, the channel, the moment the call began,
+  and the display names, which cannot be recovered afterwards once a
+  participant has left the guild. Recovery reads it back through the same
+  pipeline a live recording ends with, so the file it produces is the one the
+  call would have written, named the same way. Each directory is removed once
+  its transcript exists, and one that cannot be read is reported and left where
+  it is rather than stopping the rest.
+
+  This covers the one case that previously had no message and no recovery. It
+  covers it only for a recording that spilled: one that stayed inside its
+  memory ceiling was never written down, so lowering `MAX_BUFFER_MB` is what
+  buys the insurance, at the cost of writing during the call.
+
 ### Fixed
 
 - **A recording was lost when the bot shut down.** A recording exists only in

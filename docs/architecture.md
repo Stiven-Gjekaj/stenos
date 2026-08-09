@@ -5,9 +5,10 @@ How a call becomes a transcript, and why each stage is built the way it is.
 ```
 Discord voice  ->  sink.py  ->  audio.py  ->  transcribe.py  ->  transcript.py
    packets        segments      16 kHz mono      text            merged file
-                     |______________|
-                   the conversion runs as the
-                   packets arrive, not after
+                     |______________|         |
+                   the conversion runs as     spill.py, only once a call
+                   the packets arrive,        holds more than it may keep
+                   not after                  in memory
 ```
 
 Every stage after the sink is pure: it takes values and returns values, touches
@@ -170,20 +171,75 @@ so the sidecar's offsets index into it. It takes the transcript's stem rather
 than working one out, since a stem already taken carries a counter and the two
 would otherwise diverge.
 
-**Nothing is written while a recording runs.** Every file a call produces is
-created after it ends. The transcript and the sidecar are one write each; the
-audio is streamed a segment at a time, so an hour of it never has to exist in
-memory twice. A call that captured nothing writes nothing at all. Measured on
-an hour with four speakers, that is about 220 KB in two files, or 461 MB in six
-when the audio is kept, since a participant's file spans the whole call whether
-they spoke through it or not.
+**A recording that fits in memory writes nothing while it runs.** Every file
+such a call produces is created after it ends. The transcript and the sidecar
+are one write each; the audio is streamed a segment at a time, so an hour of it
+never has to exist in memory twice. A call that captured nothing writes nothing
+at all. Measured on an hour with four speakers, that is about 220 KB in two
+files, or 461 MB in six when the audio is kept, since a participant's file
+spans the whole call whether they spoke through it or not.
 
-This is why the ceiling in `sink.py` is measured against memory and enforced by
-ending the recording, rather than met by spooling the buffer to disk. Spooling
-is the obvious way to lift the limit and it would trade a host that touches the
-disk once per call for one that writes continuously for the length of every
-call, on hardware chosen to sit in a cupboard for a year. `MAX_BUFFER_MB` stops
-instead, and says why in the channel.
+That property is what an unattended host on a small disk is given, and it holds
+only while the memory holds. Past `MAX_BUFFER_MB` the recording continues on
+disk instead of ending, which is the subject of the next section. Nothing is
+created until that happens, so a host with the memory for its calls never finds
+out the machinery is there.
+
+---
+
+## 6. Outgrowing memory, `spill.py`
+
+A reduced segment costs 32,000 bytes for every second of speech and stays
+resident until transcription, so a call holds about 115 MB per hour of speech.
+On a server that is nothing. On a host with a gigabyte it is the whole machine,
+and until `0.2.3` crossing `MAX_BUFFER_MB` ended the call, which on that host
+is most of a meeting.
+
+Past the ceiling each segment moves to disk as it closes and the memory is
+released, so what is resident falls to the segments still open, at most
+`MAX_SEGMENT` per speaker. `MAX_DISK_MB` is what ends a recording now, counting
+both halves.
+
+Three things make the change smaller than it looks:
+
+- **Every reader already went through `Segment.snapshot`.** Spilling is one
+  more thing that answers there, so transcription, the WAV writer and the
+  sidecar cannot tell where the audio lives.
+- **The reducer already visits every segment that can no longer grow.** That is
+  where the spill happens, on the same worker and for the same reason: it is
+  off py-cord's router thread.
+- **Only settled segments move.** `extend` appends to the buffer a spill
+  empties, so moving an open segment would write out what it holds and then
+  collect the rest of that speaker's sentence into a buffer nothing reads.
+
+Entering the spilling state is one way. A recording that crossed the mark will
+cross it again the moment anything is held back, and alternating would leave
+half a call in each place for no gain.
+
+### What is on disk
+
+One append-only file of samples per participant, plus a manifest of one JSON
+object per line, in a `.partial` directory beside the transcripts. Both choices
+are about a process that does not survive the call:
+
+- **Samples are written before the line describing them.** The only tear a
+  crash can leave is bytes nobody accounts for, which recovery discards. The
+  reverse would be a record pointing past the end of a file, which cannot be
+  told from corruption.
+- **A line per record rather than one document.** Appending to JSON means
+  rewriting it, and a call with hundreds of segments would rewrite a growing
+  file hundreds of times. A torn final line is dropped and costs one segment.
+
+Writes are flushed and not synced. A killed process loses nothing; a host that
+loses power loses whatever the kernel had not written yet. An fsync per segment
+on the hardware this exists for would cost more than the ceiling it lifts.
+
+The directory is removed once the transcript is written. One still there means
+the process did not get that far, and `stenos --recover` reads it back through
+the same pipeline, producing the file the call would have produced. That is
+what the manifest carries the channel, the start time and the display names
+for: none of it can be recovered from the samples, and a participant who has
+since left the guild cannot be resolved again.
 
 Alongside the transcript body, `write_sidecar` produces a JSON sidecar
 (`build_sidecar`) for downstream tooling with the following schema:
@@ -209,7 +265,7 @@ Alongside the transcript body, `write_sidecar` produces a JSON sidecar
 
 ---
 
-## 5. Commands, `bot.py`
+## 7. Commands, `bot.py`
 
 `run_pipeline` is a plain function taking a sink, a name cache, and a config.
 It is deliberately separate from the command handlers, which is what lets the

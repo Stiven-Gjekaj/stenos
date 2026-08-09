@@ -21,6 +21,7 @@ segment gap      0.4s
 minimum segment  0.3s
 maximum segment  30.0s
 buffer limit     1024MB
+disk limit       4096MB
 disconnect grace 60s
 output directory transcripts
 keep audio       False
@@ -137,8 +138,10 @@ rejoining, so neither can be told from a recovery at the moment it happens.
 since a reconnect always rejoins the channel it left. Carrying on would file
 this call's speech under the other channel's name.
 
-**The buffer limit was reached.** `MAX_BUFFER_MB` of audio was held. Raise it,
-or set it to `0` on a host with the memory to spare.
+**The disk limit was reached.** `MAX_DISK_MB` of audio was held, counting what
+had moved to disk as well as what was in memory. Raise it if the output
+directory has the room. `MAX_BUFFER_MB` no longer ends a recording; crossing it
+moves the audio to disk and the call carries on.
 
 **The process was asked to stop.** A restart, a `systemctl stop`, or Ctrl+C.
 The recording is finished on the way out rather than lost: it is transcribed,
@@ -158,6 +161,34 @@ sleep and power settings each platform needs for an unattended run: in short,
 `caffeinate -is` on macOS with the lid open and mains power, masked sleep
 targets on Linux, and `powercfg` with the lid action set to do nothing on
 Windows.
+
+---
+
+## A recording was interrupted
+
+A recording that outgrew `MAX_BUFFER_MB` continues on disk, in a `.partial`
+directory beside the transcripts. It is removed when the transcript is written,
+so one still sitting there means the process did not get that far: it was
+killed outright, or the host lost power.
+
+The audio is still usable. Transcribe it with:
+
+```sh
+stenos --recover
+```
+
+That reads every `.partial` directory in `OUTPUT_DIR` and produces the file the
+call would have produced, named the same way, with the same speaker names. Each
+directory is removed once its transcript is written, so running it twice does
+not transcribe anything twice.
+
+A directory it cannot read is reported and left where it is, and the command
+exits non-zero, so one damaged recording does not hold up the others.
+
+Only a recording that spilled leaves anything behind. One that stayed inside
+its memory ceiling was never written down, and a process killed during it is
+the case with nothing to recover. Lowering `MAX_BUFFER_MB` is what buys the
+insurance, at the cost of writing during the call.
 
 ---
 

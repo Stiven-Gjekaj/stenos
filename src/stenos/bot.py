@@ -1089,6 +1089,7 @@ def describe_environment(config: Config) -> str:
         f"minimum segment  {config.min_segment}s",
         f"maximum segment  {config.max_segment}s",
         f"buffer limit     {_limit(config.max_buffer_mb, 'MB')}",
+        f"disk limit       {_limit(config.max_disk_mb, 'MB')}",
         f"disconnect grace {_limit(config.disconnect_grace, 's')}",
         f"output directory {output_state(config.output_dir)}",
         f"keep audio       {config.keep_audio}",
