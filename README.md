@@ -178,6 +178,7 @@ which keeps continuous integration free of model weights.
 cp .env.example .env      # then set DISCORD_TOKEN
 stenos --check            # report the resolved backend and whether opus loaded
 stenos --recover          # transcribe a recording a crash left unfinished
+stenos --transcribe *.wav # transcribe audio files, no Discord and no token
 stenos                    # start the bot
 ```
 

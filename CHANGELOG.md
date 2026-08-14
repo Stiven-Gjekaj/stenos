@@ -10,6 +10,23 @@ sections below are therefore headed by the series rather than by one version.
 
 ## 0.2.4
 
+### Added
+
+- **`stenos --transcribe` transcribes audio files without Discord.** No token,
+  no connection, and no recording: it reads files and writes the same
+  transcript and sidecar a call produces.
+
+  One file per participant, which is the shape `KEEP_AUDIO` already writes.
+  Each of those is laid out on the call's timeline with silence in the gaps, so
+  splitting on that silence recovers where each stretch of speech belongs and
+  the files merge into one transcript the way the live streams did. A recorded
+  call therefore transcribes back from its own audio to the transcript it
+  produced, which is what the test asserts rather than describes.
+
+  A file this project did not write becomes an unnamed speaker of its own,
+  named after the file, so audio recorded elsewhere still transcribes. Stereo
+  is downmixed rather than refused.
+
 ### Fixed
 
 - **A recording no longer ends because the connection dropped for a minute.**
