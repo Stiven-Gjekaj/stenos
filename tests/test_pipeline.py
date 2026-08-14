@@ -373,3 +373,122 @@ def test_audio_takes_the_name_the_transcript_took(tmp_path: Path) -> None:
     assert len(list(tmp_path.glob("*.wav"))) == 2
     for transcript, audio in written:
         assert audio[0].name.startswith(transcript.stem)
+
+
+# Everything above drives the sink by arrival alone, which is the path taken
+# when a packet carries no media timestamp. A real call carries one on every
+# packet, and each participant's counts from somewhere unrelated to everybody
+# else's. That is the mechanism the headline claim rests on, and nothing ran
+# the whole pipeline on it.
+
+#: Ticks in one 20 ms frame, counted at the rate Discord decodes to.
+FRAME_TICKS = 960
+
+
+class Packet:
+    def __init__(self, ticks: int) -> None:
+        self.timestamp = ticks
+
+
+class Data:
+    def __init__(self, ticks: int) -> None:
+        self.pcm = FRAME
+        self.packet = Packet(ticks)
+
+
+class Member:
+    def __init__(self, user_id: int) -> None:
+        self.id = user_id
+
+
+def build_media_sink(packets: Sequence[tuple[float, int, int]]) -> TimestampedSink:
+    """A sink driven by (arrival, media timestamp, user), as a call drives it."""
+    sink = TimestampedSink(
+        segment_gap=0.4,
+        clock=ScriptedClock([arrival for arrival, _, _ in packets]),
+    )
+    for _, ticks, user in packets:
+        sink.write(Data(ticks), Member(user))
+    return sink
+
+
+def media_speech(
+    start: float, base: int, user: int, frames: int = 40
+) -> list[tuple[float, int, int]]:
+    """A burst from one user, on that user's own media clock."""
+    return [(start + index * 0.02, base + index * FRAME_TICKS, user) for index in range(frames)]
+
+
+def run_media(
+    tmp_path: Path,
+    packets: Sequence[tuple[float, int, int]],
+    names: dict[int, str],
+    *,
+    backend: MockBackend | None = None,
+) -> RecordingResult:
+    return run_pipeline(
+        build_media_sink(sorted(packets)),
+        names,
+        channel_name="general",
+        config=config_for(tmp_path),
+        backend=backend or MockBackend(),
+        recorded_at=RECORDED_AT,
+    )
+
+
+def test_three_speakers_on_unrelated_clocks_order_correctly(tmp_path: Path) -> None:
+    # Each base is arbitrary and unrelated, which is what Discord actually
+    # sends. Read against one shared origin these would land hours apart.
+    packets = (
+        media_speech(0.0, 1_000_000, 11)
+        + media_speech(5.0, 4_000_000_000, 22)
+        + media_speech(10.0, 77, 33)
+    )
+    backend = MockBackend(texts=["the asset pipeline", "which part broke", "the exporter"])
+
+    result = run_media(
+        tmp_path, packets, {11: "Alpha", 22: "Bravo", 33: "Charlie"}, backend=backend
+    )
+
+    assert result.transcript_path.read_text(encoding="utf-8") == (
+        "[00:00:00] Alpha: the asset pipeline\n"
+        "[00:00:05] Bravo: which part broke\n"
+        "[00:00:10] Charlie: the exporter\n"
+    )
+
+
+def test_speakers_talking_over_each_other_both_survive(tmp_path: Path) -> None:
+    # Discord sends a stream per participant, so overlap is not a conflict to
+    # resolve: both are recorded and both appear, ordered by where they began.
+    packets = media_speech(0.0, 1_000_000, 11) + media_speech(0.4, 9_000_000, 22)
+    backend = MockBackend(texts=["so about the exporter", "sorry, go on"])
+
+    result = run_media(tmp_path, packets, {11: "Alpha", 22: "Bravo"}, backend=backend)
+
+    assert [(line.user_id, round(line.start, 1)) for line in result.lines] == [(11, 0.0), (22, 0.4)]
+    assert result.speakers == 2
+
+
+def test_two_speakers_starting_together_order_by_identifier(tmp_path: Path) -> None:
+    # merge orders by (start, user_id), and the identifier only decides when
+    # two speakers began in the same instant. Nothing reached that until now.
+    packets = media_speech(0.0, 1_000_000, 22) + media_speech(0.0, 5_000, 11)
+    backend = MockBackend(texts=["first by identifier", "second by identifier"])
+
+    result = run_media(tmp_path, packets, {11: "Alpha", 22: "Bravo"}, backend=backend)
+
+    assert [line.user_id for line in result.lines] == [11, 22]
+
+
+def test_a_speaker_whose_stream_restarts_stays_on_the_call_timeline(tmp_path: Path) -> None:
+    # A reconnect gives every speaker a new base part way through the call.
+    packets = (
+        media_speech(0.0, 1_000_000, 11)
+        + media_speech(5.0, 2_000_000, 22)
+        + media_speech(90.0, 4_000_000_000, 11)
+    )
+    backend = MockBackend(texts=["before the drop", "also before", "after the drop"])
+
+    result = run_media(tmp_path, packets, {11: "Alpha", 22: "Bravo"}, backend=backend)
+
+    assert [round(line.start, 1) for line in result.lines] == [0.0, 5.0, 90.0]

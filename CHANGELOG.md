@@ -28,7 +28,6 @@ sections below are therefore headed by the series rather than by one version.
   channel, since the transcript otherwise shows a stretch of silence a reader
   cannot tell from a quiet room.
 
-
 - **A reconnect places returning audio where it arrived.** Every participant
   comes back on a new stream counting from somewhere unrelated to the old one,
   and read against the origin the recording started with, the returning audio
