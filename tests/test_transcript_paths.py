@@ -10,6 +10,7 @@ import pytest
 from stenos.transcript import (
     format_timestamp,
     sanitize_filename,
+    speaker_from_filename,
     transcript_paths,
     transcript_stem,
 )
@@ -182,3 +183,29 @@ def test_a_half_written_pair_is_still_stepped_over(tmp_path: Path) -> None:
     transcript, _sidecar = transcript_paths(tmp_path, "general", RECORDED_AT)
 
     assert transcript != taken[0]
+
+
+def test_an_audio_file_says_who_it_belongs_to() -> None:
+    assert speaker_from_filename("stenos-general-20260809T150000Z-Alpha-11") == (11, "Alpha")
+
+
+def test_the_identifier_survives_a_stem_full_of_dashes() -> None:
+    # A stem carries the channel name, which can be anything.
+    found = speaker_from_filename("stenos-my-team-call-20260809T150000Z-Bravo-22")
+
+    assert found == (22, "Bravo")
+
+
+def test_a_dash_in_a_display_name_costs_the_name_and_not_the_identifier() -> None:
+    # The format is not unambiguous and the docstring says so. What matters is
+    # that the identifier, which the sidecar and the merge order key on, is
+    # unaffected.
+    found = speaker_from_filename("stenos-general-20260809T150000Z-Alpha-Bravo-33")
+
+    assert found is not None
+    assert found[0] == 33
+
+
+def test_a_file_this_project_did_not_write_has_no_speaker() -> None:
+    assert speaker_from_filename("some-recording") is None
+    assert speaker_from_filename("interview") is None

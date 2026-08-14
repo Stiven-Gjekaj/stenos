@@ -25,6 +25,7 @@ __all__ = [
     "render",
     "resolve_speaker",
     "sanitize_filename",
+    "speaker_from_filename",
     "split_hms",
     "transcript_paths",
     "transcript_stem",
@@ -96,6 +97,30 @@ def sanitize_filename(name: str, *, fallback: str = "channel", max_length: int =
         # "NUL.txt" would leave it reserved.
         return f"{fallback}-{cleaned}"
     return cleaned
+
+
+#: An audio file written beside a transcript: a stem, a speaker, an identifier.
+_AUDIO_NAME = re.compile(r"^(?P<stem>.+)-(?P<speaker>[^-]*)-(?P<user_id>\d+)$")
+
+
+def speaker_from_filename(name: str) -> tuple[int, str] | None:
+    """Who an audio file written beside a transcript belongs to.
+
+    ``save_audio`` writes ``<stem>-<speaker>-<user id>.wav``, and this reads it
+    back. The identifier is authoritative and the name is a convenience, which
+    matters because the format is not unambiguous: a stem carries dashes of its
+    own, and ``sanitize_filename`` can leave one in a display name, so a
+    speaker called "Alpha Bravo" survives and one called "Alpha-Bravo" parses
+    as "Bravo". The identifier is unaffected either way, and it is what the
+    sidecar and the merge order key on.
+
+    Returns None for a name that does not carry an identifier at all, which is
+    any file this project did not write.
+    """
+    found = _AUDIO_NAME.match(name)
+    if found is None:
+        return None
+    return int(found.group("user_id")), found.group("speaker")
 
 
 def transcript_stem(channel_name: str, recorded_at: datetime) -> str:
