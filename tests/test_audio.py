@@ -19,6 +19,7 @@ from stenos.audio import (
     TARGET_SAMPLE_RATE,
     downmix,
     prepare_segments,
+    read_speaker_wav,
     resample,
     segment_to_audio,
     to_float32,
@@ -511,3 +512,47 @@ def test_a_spilled_segment_still_converts_for_a_backend(tmp_path: Path) -> None:
     segment.spill_to(spill_writer(tmp_path / "call.partial"))
 
     assert np.array_equal(segment_to_audio(segment), expected)
+
+
+def test_a_written_wav_reads_back_as_the_audio_it_held(tmp_path: Path) -> None:
+    # The round trip the offline entry point depends on: what KEEP_AUDIO wrote
+    # has to come back as the same samples at the same rate.
+    # Already at the rate a model reads, so writing it resamples nothing and
+    # the bytes that come back are the bytes that went in.
+    segment = Segment(user_id=11, start=0.0, pcm=bytearray(b"\x00\x04" * 8000))
+    segment.sample_rate = TARGET_SAMPLE_RATE
+    expected = segment.snapshot()[0]
+    path = write_speaker_wav(tmp_path / "call-Alpha-11.wav", [segment])
+
+    pcm, rate = read_speaker_wav(path)
+
+    assert rate == TARGET_SAMPLE_RATE
+    assert pcm == expected
+
+
+def test_a_stereo_file_is_downmixed_rather_than_refused(tmp_path: Path) -> None:
+    # Somebody transcribing audio they recorded elsewhere should not have to
+    # convert it first.
+    path = tmp_path / "stereo.wav"
+    with wave.open(str(path), "wb") as handle:
+        handle.setnchannels(2)
+        handle.setsampwidth(2)
+        handle.setframerate(TARGET_SAMPLE_RATE)
+        handle.writeframes(b"\x00\x04\x00\x04" * 100)
+
+    pcm, rate = read_speaker_wav(path)
+
+    assert rate == TARGET_SAMPLE_RATE
+    assert len(pcm) == 200
+
+
+def test_audio_that_is_not_sixteen_bit_is_refused_with_a_reason(tmp_path: Path) -> None:
+    path = tmp_path / "eight-bit.wav"
+    with wave.open(str(path), "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(1)
+        handle.setframerate(TARGET_SAMPLE_RATE)
+        handle.writeframes(b"\x40" * 100)
+
+    with pytest.raises(ValueError, match="8 bit"):
+        read_speaker_wav(path)

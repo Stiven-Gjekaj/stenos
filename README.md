@@ -9,7 +9,7 @@ _One timestamped, speaker-attributed transcript. No audio leaves the machine_
 <p align="center">
   <img src="https://img.shields.io/badge/Python-3.11%20to%203.13-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python 3.11 to 3.13"/>
   <img src="https://img.shields.io/badge/dependencies-4_direct-007ec6?style=for-the-badge" alt="Four direct runtime dependencies"/>
-  <img src="https://img.shields.io/badge/tests-694_passing-427819?style=for-the-badge" alt="694 tests passing"/>
+  <img src="https://img.shields.io/badge/tests-697_passing-427819?style=for-the-badge" alt="697 tests passing"/>
 </p>
 
 <p align="center">
@@ -410,14 +410,14 @@ becomes text, and text becomes one ordered transcript.
 | **Receiving** | sink.py | 579 | Places packets on the media clock they carry and splits segments on silence; loads libopus |
 | **Transport** | voice.py | 200 | Reads the end-to-end encryption state a voice connection negotiated |
 | **Transport** | upstream.py | 861 | Repairs the py-cord 2.8.1 defects that lose received audio or end a recording, when they are present |
-| **Conversion** | audio.py | 424 | Downmixes and resamples to 16 kHz mono, discarding fragments too short to carry speech |
+| **Conversion** | audio.py | 449 | Downmixes and resamples to 16 kHz mono, discarding fragments too short to carry speech |
 | **Verification** | integrity.py | 116 | Separates a recording that captured nothing from a call in which nobody spoke |
 | **Transcription** | transcribe.py | 444 | Backend protocol, mlx and faster-whisper implementations, and the segment loop |
 | **Output** | transcript.py | 278 | Merges, orders, and writes the transcript and its sidecar portably |
 | **Output** | spill.py | 345 | Holds a recording that outgrew memory on disk, and reads back one a crash left behind |
 | **Commands** | bot.py | 1446 | Slash commands, session state, the offline pipeline, and the CLI |
 | **Configuration** | config.py | 343 | Validated environment parsing and platform-aware backend resolution |
-| **Total** | **12 files** | **5062** | Plus 8232 lines of tests |
+| **Total** | **12 files** | **5087** | Plus 8277 lines of tests |
 
 ```
 src/stenos/      the bot (sink, transport, audio, transcription, output, commands)

@@ -44,6 +44,7 @@ __all__ = [
     "downsample",
     "loudness",
     "prepare_segments",
+    "read_speaker_wav",
     "resample",
     "segment_to_audio",
     "to_float32",
@@ -331,6 +332,30 @@ class Segment:
         """Release the buffered audio, once there is nothing left to read it for."""
         with self._lock:
             self.pcm.clear()
+
+
+def read_speaker_wav(path: Path) -> tuple[bytes, int]:
+    """One participant's audio and the rate it is stored at.
+
+    The counterpart to ``write_speaker_wav``. Mono is expected, since that is
+    what this project writes, but a stereo file is downmixed rather than
+    refused: somebody transcribing audio they recorded elsewhere should not
+    have to convert it first.
+    """
+    with wave.open(str(path), "rb") as handle:
+        if handle.getsampwidth() != DISCORD_SAMPLE_WIDTH:
+            raise ValueError(
+                f"{path} is {handle.getsampwidth() * 8} bit, and only 16 bit audio is read"
+            )
+        rate = handle.getframerate()
+        pcm = handle.readframes(handle.getnframes())
+        if handle.getnchannels() == DISCORD_CHANNELS:
+            return downmix(pcm), rate
+        if handle.getnchannels() != 1:
+            raise ValueError(
+                f"{path} has {handle.getnchannels()} channels, and only 1 or 2 are read"
+            )
+    return pcm, rate
 
 
 def loudness(audio: npt.NDArray[np.float32]) -> float:
