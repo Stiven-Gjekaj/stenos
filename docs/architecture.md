@@ -309,6 +309,15 @@ once.
 
 ---
 
+## The graphical interface
+
+Designed but not built. What it is written in, what it shows, and why it
+listens on no port are settled in [interface.md](interface.md). Everything it
+drives is already a function taking values and returning values, which is the
+reason the seams above were built the way they were.
+
+---
+
 ## Adding a backend
 
 1. Implement `transcribe(audio, language) -> str` and a `name` attribute.

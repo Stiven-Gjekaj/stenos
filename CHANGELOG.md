@@ -12,6 +12,16 @@ sections below are therefore headed by the series rather than by one version.
 
 ### Added
 
+- **The graphical interface has a written design.** `docs/interface.md`
+  settles what it is written in and what it does, before any of it exists:
+  Tkinter from the standard library, so there is no fifth dependency and
+  nothing extra to freeze; local only with nothing listening on a port, since a
+  local web interface would need one and the project's position is that nothing
+  leaves the machine; running the bot in its own process rather than attaching
+  to one, because every control channel between two processes is a port or a
+  pipe by another name; and showing the live recording, a library of past
+  transcripts, and configuration.
+
 - **`stenos --transcribe` transcribes audio files without Discord.** No token,
   no connection, and no recording: it reads files and writes the same
   transcript and sidecar a call produces.
