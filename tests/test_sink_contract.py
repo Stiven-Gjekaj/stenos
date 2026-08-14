@@ -14,6 +14,7 @@ from typing import Any, ClassVar
 import pytest
 from discord.voice.receive.reader import AudioReader
 
+from helpers import ScriptedClock
 from stenos.sink import TimestampedSink, _decoded
 
 
@@ -134,3 +135,31 @@ def test_audio_from_an_unknown_speaker_is_counted_not_buffered() -> None:
     assert sink.segments() == []
     assert sink.packet_count == 0
     assert sink.unattributed_packets == 1
+
+
+def test_a_speaker_learned_late_is_attributed_from_then_on() -> None:
+    # ssrc_user_map is populated asynchronously, so the first packets of a call
+    # can arrive before Discord has said who they belong to. Those are counted
+    # and dropped, and everything after the mapping arrives is recorded
+    # normally rather than the whole speaker being written off.
+    sink = TimestampedSink()
+
+    sink.write(VoiceData(b"\x11\x22" * 480), None)
+    sink.write(VoiceData(b"\x11\x22" * 480), None)
+    sink.write(VoiceData(b"\x11\x22" * 480), SimpleNamespace(id=77))
+
+    assert sink.unattributed_packets == 2
+    assert sink.packet_count == 1
+    assert [segment.user_id for segment in sink.segments()] == [77]
+
+
+def test_an_unattributed_packet_does_not_open_the_recording() -> None:
+    # The recording origin is the first packet that could be placed on the
+    # timeline. Starting it on one nobody can be attributed would put the first
+    # real speaker later than they spoke.
+    sink = TimestampedSink(clock=ScriptedClock([0.0, 5.0]))
+
+    sink.write(VoiceData(b"\x11\x22" * 480), None)
+    sink.write(VoiceData(b"\x11\x22" * 480), SimpleNamespace(id=77))
+
+    assert [round(segment.start, 3) for segment in sink.segments()] == [0.0]
