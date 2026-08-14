@@ -22,6 +22,7 @@ from stenos.audio import (
     read_speaker_wav,
     resample,
     segment_to_audio,
+    segments_from_audio,
     to_float32,
     to_int16,
     write_speaker_wav,
@@ -556,3 +557,53 @@ def test_audio_that_is_not_sixteen_bit_is_refused_with_a_reason(tmp_path: Path) 
 
     with pytest.raises(ValueError, match="8 bit"):
         read_speaker_wav(path)
+
+
+def test_a_file_splits_back_into_the_segments_that_wrote_it(tmp_path: Path) -> None:
+    # The round trip the offline entry point rests on: write_speaker_wav lays
+    # speech on the call timeline with silence in the gaps, so the silence is
+    # where the segments were.
+    first = Segment(user_id=11, start=0.0, pcm=bytearray(b"\x00\x04" * 8000))
+    first.sample_rate = TARGET_SAMPLE_RATE
+    second = Segment(user_id=11, start=3.0, pcm=bytearray(b"\x00\x04" * 8000))
+    second.sample_rate = TARGET_SAMPLE_RATE
+    path = write_speaker_wav(tmp_path / "call-Alpha-11.wav", [first, second])
+
+    pcm, rate = read_speaker_wav(path)
+    recovered = segments_from_audio(pcm, user_id=11, sample_rate=rate, gap=0.4)
+
+    assert [round(segment.start, 1) for segment in recovered] == [0.0, 3.0]
+    assert all(segment.user_id == 11 for segment in recovered)
+
+
+def test_a_pause_shorter_than_the_gap_does_not_split(tmp_path: Path) -> None:
+    # Otherwise every breath becomes its own line.
+    speech = b"\x00\x04" * 1600
+    pcm = speech + bytes(1600) + speech
+
+    recovered = segments_from_audio(pcm, user_id=11, sample_rate=TARGET_SAMPLE_RATE, gap=0.4)
+
+    assert len(recovered) == 1
+
+
+def test_a_file_holding_only_silence_yields_nothing() -> None:
+    recovered = segments_from_audio(
+        bytes(32000), user_id=11, sample_rate=TARGET_SAMPLE_RATE, gap=0.4
+    )
+
+    assert recovered == []
+
+
+def test_an_empty_file_yields_nothing() -> None:
+    assert segments_from_audio(b"", user_id=11, sample_rate=TARGET_SAMPLE_RATE, gap=0.4) == []
+
+
+def test_speech_running_to_the_end_of_the_file_is_kept() -> None:
+    # The last stretch has no silence after it to close it, and dropping it
+    # would lose whatever was said last.
+    pcm = bytes(16000) + b"\x00\x04" * 8000
+
+    recovered = segments_from_audio(pcm, user_id=11, sample_rate=TARGET_SAMPLE_RATE, gap=0.4)
+
+    assert len(recovered) == 1
+    assert recovered[0].start == pytest.approx(0.5, abs=0.05)

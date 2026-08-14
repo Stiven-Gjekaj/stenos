@@ -47,6 +47,7 @@ __all__ = [
     "read_speaker_wav",
     "resample",
     "segment_to_audio",
+    "segments_from_audio",
     "to_float32",
     "to_int16",
     "write_speaker_wav",
@@ -356,6 +357,64 @@ def read_speaker_wav(path: Path) -> tuple[bytes, int]:
                 f"{path} has {handle.getnchannels()} channels, and only 1 or 2 are read"
             )
     return pcm, rate
+
+
+def segments_from_audio(
+    pcm: bytes,
+    *,
+    user_id: int,
+    sample_rate: int,
+    gap: float,
+) -> list[Segment]:
+    """Split one participant's audio back into segments, on its silence.
+
+    ``write_speaker_wav`` lays a participant's speech on the call's timeline
+    with silence filling the gaps, so the silence is where the segments were.
+    Splitting on it recovers approximately the segmentation the call had, which
+    is what makes transcribing those files comparable with the transcript the
+    call produced.
+
+    Approximately, not exactly. A speaker who paused for longer than ``gap``
+    mid sentence is split here as they were split live, but a gap the recording
+    never had, because the speaker was simply quiet, is a new boundary. The
+    offsets are exact either way, which is what the transcript reads.
+    """
+    frame = max(1, int(sample_rate * gap))
+    usable = len(pcm) - len(pcm) % DISCORD_SAMPLE_WIDTH
+    samples = np.frombuffer(pcm[:usable], dtype="<i2")
+
+    # The samples that carry anything, then the runs between the gaps that are
+    # long enough to have closed a segment. Found on the samples themselves
+    # rather than on fixed blocks, which would round every boundary to the
+    # nearest block and move an offset by up to a whole gap.
+    voiced = np.flatnonzero(samples)
+    if voiced.size == 0:
+        return []
+    breaks = np.flatnonzero(np.diff(voiced) > frame)
+    starts = np.concatenate(([voiced[0]], voiced[breaks + 1]))
+    ends = np.concatenate((voiced[breaks], [voiced[-1]]))
+
+    return [
+        _span(samples, int(first), int(last) + 1, user_id, sample_rate)
+        for first, last in zip(starts, ends, strict=True)
+    ]
+
+
+def _span(
+    samples: npt.NDArray[np.int16],
+    first: int,
+    last: int,
+    user_id: int,
+    sample_rate: int,
+) -> Segment:
+    """One stretch of speech, placed where it sits in the file."""
+    segment = Segment(
+        user_id=user_id,
+        start=first / sample_rate,
+        pcm=bytearray(samples[first:last].tobytes()),
+    )
+    segment.sample_rate = sample_rate
+    return segment
 
 
 def loudness(audio: npt.NDArray[np.float32]) -> float:
