@@ -8,6 +8,21 @@ of the [README](README.md). A release covers a whole series: every commit
 sharing an `X.N.V` belongs to it, and the tag is cut at the last of them. The
 sections below are therefore headed by the series rather than by one version.
 
+## 0.2.4
+
+### Fixed
+
+- **A reconnect places returning audio where it arrived.** Every participant
+  comes back on a new stream counting from somewhere unrelated to the old one,
+  and read against the origin the recording started with, the returning audio
+  belongs hours from where it was spoken. The sink settles that against arrival
+  time, which cannot be wrong by hours, and starts the media clock again from
+  the packet that disagreed. It always did this; nothing held it, and the work
+  in [#5](https://github.com/Stiven-Gjekaj/stenos/issues/5) depends on it, so
+  it is pinned before anything is built on top of it. Each speaker re-bases
+  separately, a buffering hiccup does not re-base at all, and the outage
+  appears as silence rather than as displaced audio.
+
 ## 0.2.3
 
 ### Added

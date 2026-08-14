@@ -748,3 +748,60 @@ def test_a_segment_the_reducer_has_not_reached_is_reduced_before_it_moves(
         # What a reduced 20 ms frame measures, rather than the 48 kHz original.
         assert segment.spill is not None
         assert segment.spill.length == len(FRAME) // 2 // 3
+
+
+# What a voice reconnect does to the clock. py-cord resumes on its own and the
+# reader survives it, so the audio keeps arriving; every speaker comes back on
+# a new SSRC counting from somewhere unrelated, which is the case
+# MAX_CLOCK_DISAGREEMENT exists for and which only synthetic packets reach.
+
+
+def test_a_reconnect_puts_returning_audio_where_it_arrived() -> None:
+    # Read against the old origin the new count lands hours away. Arrival
+    # cannot be wrong by that much, so it settles it and the media clock starts
+    # again from the packet that disagreed.
+    before = [(index * 0.02, 1_000_000 + index * FRAME_TICKS, 1) for index in range(10)]
+    # Ninety seconds of outage, then a base with no relation to the old one.
+    after = [(90.0 + index * 0.02, 4_000_000_000 + index * FRAME_TICKS, 1) for index in range(10)]
+
+    segments = record_media(before + after).segments()
+
+    assert len(segments) == 2
+    assert segments[0].start == pytest.approx(0.0)
+    assert segments[1].start == pytest.approx(90.0)
+    # The gap is a gap rather than displaced audio, and nothing overlaps.
+    assert segments[0].end < segments[1].start
+    assert segments[1].end == pytest.approx(90.2, abs=0.01)
+
+
+def test_every_speaker_rebases_independently_across_a_reconnect() -> None:
+    # Each participant has their own media clock, so a reconnect re-bases each
+    # of them separately and one settling must not move the others.
+    packets: list[tuple[float, int, int]] = []
+    for index in range(10):
+        packets.append((index * 0.02, 1_000_000 + index * FRAME_TICKS, 1))
+        packets.append((index * 0.02 + 0.001, 7_000_000 + index * FRAME_TICKS, 2))
+    for index in range(10):
+        packets.append((90.0 + index * 0.02, 4_000_000_000 + index * FRAME_TICKS, 1))
+        packets.append((90.0 + index * 0.02 + 0.001, 2_222_222_222 + index * FRAME_TICKS, 2))
+
+    segments = record_media(sorted(packets)).segments()
+
+    starts = {(segment.user_id, round(segment.start, 1)) for segment in segments}
+    assert starts == {(1, 0.0), (2, 0.0), (1, 90.0), (2, 90.0)}
+
+
+def test_a_reconnect_inside_the_tolerance_does_not_rebase() -> None:
+    # A buffering hiccup moves audio by fractions of a second, and re-basing on
+    # that would throw away the media clock every time delivery stuttered.
+    packets = [(index * 0.02, 1_000_000 + index * FRAME_TICKS, 1) for index in range(10)]
+    # Delivered late by a second, still counting on the original clock.
+    packets += [
+        (11.0 + index * 0.02, 1_000_000 + 480_000 + index * FRAME_TICKS, 1) for index in range(5)
+    ]
+
+    segments = record_media(packets).segments()
+
+    # Placed at ten seconds by the media clock it carries, not at eleven where
+    # it happened to arrive.
+    assert segments[-1].start == pytest.approx(10.0)
