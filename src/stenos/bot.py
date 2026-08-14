@@ -610,8 +610,11 @@ class StenosBot(discord.Bot):  # type: ignore[misc]
             if not self.connection_lost(session):
                 # Cleared rather than left. A connection that came back must
                 # not count the time it was away against the next outage.
+                away = session.outage_since
                 session.disconnected_since = None
                 session.outage_since = None
+                if away is not None:
+                    await self.report_recovery(session, now - away)
                 continue
 
             if session.outage_since is None:
@@ -659,6 +662,27 @@ class StenosBot(discord.Bot):  # type: ignore[misc]
         if ceiling > 0 and since is not None and time.perf_counter() - since >= ceiling:
             return ceiling, "MAX_OUTAGE"
         return self.config.disconnect_grace, "DISCONNECT_GRACE"
+
+    async def report_recovery(self, session: RecordingSession, away: float) -> None:
+        """Say that a recording carried on through an outage.
+
+        The transcript shows a stretch of nothing where the connection was
+        down, and a reader has no way to tell that from a room that went quiet.
+        Reported where the recording was started from, since nobody asked for
+        this and there is no interaction to answer.
+        """
+        log.info(
+            "Voice connection to %s came back after %.0fs. The recording continues.",
+            session.channel_name,
+            away,
+        )
+        await _reply(
+            session.text_channel,
+            f"The voice connection to {session.channel_name} dropped for "
+            f"{format_duration(away)} and came back. The recording continued, so that "
+            f"stretch is silent in the transcript rather than missing from it.",
+            None,
+        )
 
     async def enforce_connection(self) -> None:
         """End any recording whose connection did not come back, and say why."""

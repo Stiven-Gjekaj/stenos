@@ -1666,3 +1666,29 @@ async def test_a_voice_client_with_no_readable_state_reads_as_not_recovering(
     await bot.enforce_connection()
 
     assert session.disconnected_since is not None
+
+
+async def test_a_recording_that_survived_an_outage_says_so(tmp_path: Path) -> None:
+    # The transcript shows a stretch of nothing, and a reader cannot tell that
+    # from a room that went quiet.
+    bot, channel, session = await recording_with_self(tmp_path, disconnect_grace=3600.0)
+    channel.voice_client.connected = False
+    channel.voice_client._connection = flow_state("disconnected")
+    await bot.enforce_connection()
+
+    channel.voice_client.connected = True
+    await bot.enforce_connection()
+
+    (message, _attachment) = session.text_channel.sent[0]
+    assert "dropped for" in message
+    assert "silent in the transcript" in message
+    assert 1 in bot.sessions
+
+
+async def test_a_connection_that_never_dropped_says_nothing(tmp_path: Path) -> None:
+    bot, _channel, session = await recording_with_self(tmp_path)
+
+    await bot.enforce_connection()
+    await bot.enforce_connection()
+
+    assert session.text_channel.sent == []

@@ -12,6 +12,23 @@ sections below are therefore headed by the series rather than by one version.
 
 ### Fixed
 
+- **A recording no longer ends because the connection dropped for a minute.**
+  py-cord reconnects and resumes on its own, and it keeps the reader attached
+  while it does, so the audio comes back into the same recording. What ended
+  the call was this side of it: `DISCONNECT_GRACE` started counting at the
+  first check that found the connection down, and a two minute outage
+  comfortably outlasted the sixty second default. One interrupted call produced
+  two transcripts.
+
+  The grace now measures only the time nothing is being attempted. While
+  py-cord is part way through the handshake the recording holds, and the new
+  `MAX_OUTAGE`, defaulting to fifteen minutes, bounds the whole outage so a
+  host whose network never returns cannot sit reporting a call that is
+  receiving nothing. A recording that carries on through a drop says so in the
+  channel, since the transcript otherwise shows a stretch of silence a reader
+  cannot tell from a quiet room.
+
+
 - **A reconnect places returning audio where it arrived.** Every participant
   comes back on a new stream counting from somewhere unrelated to the old one,
   and read against the origin the recording started with, the returning audio
