@@ -19,7 +19,14 @@ import discord
 from discord.ext import tasks
 
 from . import __version__
-from .audio import TARGET_SAMPLE_RATE, Segment, prepare_segments, write_speaker_wav
+from .audio import (
+    TARGET_SAMPLE_RATE,
+    Segment,
+    prepare_segments,
+    read_speaker_wav,
+    segments_from_audio,
+    write_speaker_wav,
+)
 from .config import Config, ConfigError, certificate_bundle, load_config
 from .integrity import check_recording
 from .sink import OPUS_PATH_VARIABLE, TimestampedSink, bundle_directory, ensure_opus
@@ -44,6 +51,7 @@ from .transcript import (
     merge,
     resolve_speaker,
     sanitize_filename,
+    speaker_from_filename,
     split_hms,
     transcript_paths,
     transcript_stem,
@@ -1282,6 +1290,18 @@ def describe_environment(config: Config) -> str:
     return "\n".join(lines)
 
 
+def sink_of(segments: Iterable[Segment]) -> TimestampedSink:
+    """A sink holding segments that were placed on a timeline somewhere else.
+
+    Appended rather than written through, because ``write`` places a packet on
+    a clock and these already carry the offsets they were given, whether by the
+    call that spilled them or by the file they were split out of.
+    """
+    sink = TimestampedSink()
+    sink._segments.extend(segments)
+    return sink
+
+
 def recover_recording(found: SpilledRecording, config: Config) -> RecordingResult:
     """Transcribe a recording its own process never finished.
 
@@ -1291,26 +1311,88 @@ def recover_recording(found: SpilledRecording, config: Config) -> RecordingResul
     directory says which participant said what beyond the identifiers, which is
     why the manifest carries the names.
     """
-    sink = TimestampedSink()
+    segments = []
     for item in found.segments:
-        # Appended rather than written through, because write places a packet on
-        # a clock and these already carry the offsets the call gave them.
-        sink._segments.append(
-            Segment(
-                user_id=item.user_id,
-                start=item.start,
-                pcm=bytearray(found.audio_of(item)),
-                sample_rate=item.sample_rate,
-            )
+        segment = Segment(
+            user_id=item.user_id,
+            start=item.start,
+            pcm=bytearray(found.audio_of(item)),
         )
+        segment.sample_rate = item.sample_rate
+        segments.append(segment)
     return run_pipeline(
-        sink,
+        sink_of(segments),
         found.names,
         channel_name=found.channel,
         config=config,
         backend=load_backend(config.whisper_backend, config.whisper_model),
         recorded_at=found.started_at,
     )
+
+
+def transcribe_files(paths: Sequence[Path], config: Config) -> RecordingResult:
+    """Transcribe audio files as though they were one recording.
+
+    One file per participant, which is the shape ``KEEP_AUDIO`` writes: each is
+    laid out on the call's timeline with silence in the gaps, so splitting on
+    that silence recovers where each stretch of speech belongs and the files
+    merge into a single transcript the way the streams did.
+
+    A file whose name does not carry an identifier becomes an unnamed speaker
+    of its own, so audio recorded elsewhere still transcribes, with attribution
+    that says only which file a line came from.
+    """
+    segments: list[Segment] = []
+    names: dict[int, str] = {}
+    for index, path in enumerate(paths):
+        found = speaker_from_filename(path.stem)
+        # Negative, so an invented identifier can never collide with a Discord
+        # one, and stable within a run so two files stay two speakers.
+        user_id, name = found if found is not None else (-(index + 1), path.stem)
+        names[user_id] = name
+        pcm, rate = read_speaker_wav(path)
+        segments.extend(
+            segments_from_audio(
+                pcm,
+                user_id=user_id,
+                sample_rate=rate,
+                gap=config.segment_gap,
+            )
+        )
+
+    channel = paths[0].parent.name or "audio"
+    return run_pipeline(
+        sink_of(sorted(segments, key=lambda segment: (segment.start, segment.user_id))),
+        names,
+        channel_name=channel,
+        config=config,
+        backend=load_backend(config.whisper_backend, config.whisper_model),
+    )
+
+
+def transcribe(paths: Sequence[Path], config: Config) -> int:
+    """Transcribe files named on the command line, reporting what was written."""
+    missing = [path for path in paths if not path.is_file()]
+    if missing:
+        for path in missing:
+            log.error("%s is not a file.", path)
+        return 2
+
+    try:
+        result = transcribe_files(paths, config)
+    except (OSError, ValueError) as error:
+        log.error("Could not transcribe: %s: %s", error.__class__.__name__, error)
+        return 1
+
+    print(result.transcript_path)  # noqa: T201  this is the command's output
+    log.info(
+        "Wrote %s from %d file(s): %d segments, %d speakers.",
+        result.transcript_path,
+        len(paths),
+        result.segment_count,
+        result.speakers,
+    )
+    return 0
 
 
 def recover(config: Config) -> int:
@@ -1367,6 +1449,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="report the resolved configuration and exit without connecting",
     )
     parser.add_argument(
+        "--transcribe",
+        nargs="+",
+        metavar="FILE",
+        type=Path,
+        help="transcribe audio files instead of connecting, one file per speaker",
+    )
+    parser.add_argument(
         "--recover",
         action="store_true",
         help="transcribe recordings left behind by a process that did not finish",
@@ -1392,6 +1481,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.check:
         print(describe_environment(config))  # noqa: T201  the report is this command's output
         return 0
+
+    if args.transcribe:
+        return transcribe(args.transcribe, config)
 
     if args.recover:
         return recover(config)

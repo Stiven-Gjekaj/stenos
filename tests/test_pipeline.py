@@ -11,6 +11,7 @@ import pytest
 
 from helpers import ScriptedClock
 from stenos import bot as bot_module
+from stenos.audio import Segment, write_speaker_wav
 from stenos.bot import RecordingResult, discard_audio, run_pipeline
 from stenos.config import Config
 from stenos.sink import BYTES_PER_SECOND, TimestampedSink
@@ -492,3 +493,61 @@ def test_a_speaker_whose_stream_restarts_stays_on_the_call_timeline(tmp_path: Pa
     result = run_media(tmp_path, packets, {11: "Alpha", 22: "Bravo"}, backend=backend)
 
     assert [round(line.start, 1) for line in result.lines] == [0.0, 5.0, 90.0]
+
+
+#: What the mock backend returns for the round trip below.
+texts = ["the asset pipeline", "which part broke", "the exporter"]
+
+# Transcribing files, which needs no Discord token and no connection. The round
+# trip is the check: what KEEP_AUDIO wrote should transcribe back to the
+# transcript the same call produced.
+
+
+def test_a_recorded_call_transcribes_back_from_its_own_audio(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(bot_module, "load_backend", lambda *a, **k: MockBackend(texts=list(texts)))
+    packets = (
+        media_speech(0.0, 1_000_000, 11)
+        + media_speech(5.0, 4_000_000_000, 22)
+        + media_speech(10.0, 77, 11)
+    )
+    names = {11: "Alpha", 22: "Bravo"}
+    live = run_pipeline(
+        build_media_sink(sorted(packets)),
+        names,
+        channel_name="general",
+        config=config_for(tmp_path, keep_audio=True),
+        backend=MockBackend(texts=list(texts)),
+        recorded_at=RECORDED_AT,
+    )
+
+    written = sorted(tmp_path.glob("*.wav"))
+    assert len(written) == 2
+
+    recovered = bot_module.transcribe_files(written, config_for(tmp_path, whisper_backend="mock"))
+
+    # The same speakers at the same offsets, read out of the audio alone.
+    assert [(line.user_id, round(line.start, 1)) for line in recovered.lines] == [
+        (line.user_id, round(line.start, 1)) for line in live.lines
+    ]
+
+
+def test_a_file_this_project_did_not_write_becomes_its_own_speaker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(bot_module, "load_backend", lambda *a, **k: MockBackend())
+    path = tmp_path / "interview.wav"
+    segment = Segment(user_id=1, start=0.0, pcm=bytearray(b"\x00\x04" * 16000))
+    segment.sample_rate = 16000
+    write_speaker_wav(path, [segment])
+
+    result = bot_module.transcribe_files([path], config_for(tmp_path))
+
+    assert result.lines
+    # Named after the file, since nothing else says who is speaking.
+    assert result.lines[0].speaker == "interview"
+
+
+def test_transcribing_a_file_that_is_not_there_says_so(tmp_path: Path) -> None:
+    assert bot_module.transcribe([tmp_path / "absent.wav"], config_for(tmp_path)) == 2
