@@ -1548,3 +1548,121 @@ def test_starting_up_says_when_a_recording_was_left_unfinished(
         bot_module.main([])
 
     assert any("stenos --recover" in message for message in caplog.messages)
+
+
+# A reconnect. py-cord resumes on its own and keeps the reader attached, so the
+# audio comes back into the same sink. What used to end the recording was this
+# side of it, on a grace shorter than a real outage.
+
+
+def flow_state(name: str) -> SimpleNamespace:
+    """A stand in for the state machine a voice connection runs through."""
+    return SimpleNamespace(state=SimpleNamespace(name=name))
+
+
+async def test_a_connection_being_recovered_is_not_ended(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(bot_module, "load_backend", lambda *a, **k: MockBackend(texts=["a line"]))
+    bot, channel, _session = await recording_with_self(tmp_path, disconnect_grace=0.01)
+    channel.voice_client.connected = False
+    channel.voice_client._connection = flow_state("got_voice_server_update")
+
+    for _ in range(3):
+        await bot.enforce_connection()
+        time.sleep(0.02)
+    await bot.enforce_connection()
+
+    # Well past the grace, and still recording, because something is being
+    # attempted and the grace has nothing to measure yet.
+    assert 1 in bot.sessions
+
+
+async def test_a_connection_nobody_is_recovering_still_ends(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The behaviour that was there before, unchanged: py-cord has given up, so
+    # the grace is what decides.
+    monkeypatch.setattr(bot_module, "load_backend", lambda *a, **k: MockBackend(texts=["a line"]))
+    bot, channel, _session = await recording_with_self(tmp_path, disconnect_grace=0.01)
+    channel.voice_client.connected = False
+    channel.voice_client._connection = flow_state("disconnected")
+
+    await bot.enforce_connection()
+    time.sleep(0.02)
+    await bot.enforce_connection()
+
+    assert 1 not in bot.sessions
+
+
+async def test_a_recovery_that_never_succeeds_ends_at_the_outage_ceiling(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Otherwise a host whose network never comes back holds the recording open
+    # for as long as py-cord keeps retrying, reporting a call receiving nothing.
+    monkeypatch.setattr(bot_module, "load_backend", lambda *a, **k: MockBackend(texts=["a line"]))
+    bot, channel, session = await recording_with_self(
+        tmp_path, disconnect_grace=3600.0, max_outage=0.01
+    )
+    feed(session)
+    channel.voice_client.connected = False
+    channel.voice_client._connection = flow_state("websocket_connected")
+
+    await bot.enforce_connection()
+    time.sleep(0.02)
+    await bot.enforce_connection()
+
+    assert 1 not in bot.sessions
+    (message, _attachment) = session.text_channel.sent[0]
+    assert "MAX_OUTAGE" in message
+
+
+async def test_a_connection_that_comes_back_clears_both_clocks(tmp_path: Path) -> None:
+    bot, channel, session = await recording_with_self(tmp_path, disconnect_grace=3600.0)
+    channel.voice_client.connected = False
+    channel.voice_client._connection = flow_state("disconnected")
+    await bot.enforce_connection()
+    assert session.disconnected_since is not None
+    assert session.outage_since is not None
+
+    channel.voice_client.connected = True
+    await bot.enforce_connection()
+
+    # Both cleared, so the next outage is measured from itself rather than
+    # inheriting the time this one was away.
+    assert session.disconnected_since is None
+    assert session.outage_since is None
+    assert 1 in bot.sessions
+
+
+async def test_a_retry_that_fails_gets_the_whole_grace_again(tmp_path: Path) -> None:
+    # A reconnect can be attempted, fail, and be attempted again. The grace
+    # measures the time nothing was being attempted, so a failed attempt must
+    # not leave the remainder of an earlier wait behind it.
+    bot, channel, session = await recording_with_self(tmp_path, disconnect_grace=3600.0)
+    channel.voice_client.connected = False
+    channel.voice_client._connection = flow_state("disconnected")
+    await bot.enforce_connection()
+    assert session.disconnected_since is not None
+
+    channel.voice_client._connection = flow_state("got_ip_discovery")
+    await bot.enforce_connection()
+
+    assert session.disconnected_since is None
+    # The outage clock keeps running, because that one bounds the whole thing.
+    assert session.outage_since is not None
+
+
+async def test_a_voice_client_with_no_readable_state_reads_as_not_recovering(
+    tmp_path: Path,
+) -> None:
+    # A py-cord that renames the state machine must fall back to the grace
+    # rather than to a recording that waits for a recovery nothing can see.
+    bot, channel, session = await recording_with_self(tmp_path, disconnect_grace=3600.0)
+    channel.voice_client.connected = False
+
+    assert bot.reconnecting(session) is False
+
+    await bot.enforce_connection()
+
+    assert session.disconnected_since is not None

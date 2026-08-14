@@ -260,6 +260,11 @@ class RecordingSession:
     #: A reconnect reads as disconnected until it succeeds, so what decides a
     #: recording is how long this has been set rather than that it is.
     disconnected_since: float | None = None
+    #: When the connection first went down, whether or not py-cord is still
+    #: recovering. Kept apart from the field above, which only runs while
+    #: nothing is being attempted, so the two ceilings measure different things
+    #: and the message can say which one ended the recording.
+    outage_since: float | None = None
 
     def elapsed(self) -> float:
         """Seconds since recording began."""
@@ -561,6 +566,25 @@ class StenosBot(discord.Bot):  # type: ignore[misc]
         except Exception:
             return False
 
+    def reconnecting(self, session: RecordingSession) -> bool:
+        """Whether py-cord is part way through restoring the voice connection.
+
+        py-cord runs a voice connection through a handshake, from
+        ``disconnected`` to ``connected``, and ``is_connected`` is true only at
+        the end of it. A state that is neither endpoint is an attempt in
+        flight, which is worth waiting for rather than ending a call over.
+
+        Guarded the way ``connection_lost`` is, and falsely for the same
+        reason turned around: a py-cord that renames this reads as not
+        recovering, so a recording ends on the grace as it always did, rather
+        than waiting on a recovery nothing can see the end of.
+        """
+        state = getattr(getattr(session.voice_client, "_connection", None), "state", None)
+        name = getattr(state, "name", None)
+        if not isinstance(name, str):
+            return False
+        return name not in {"disconnected", "connected"}
+
     async def stranded(self) -> list[RecordingSession]:
         """Sessions whose voice connection has been gone longer than the grace.
 
@@ -576,7 +600,8 @@ class StenosBot(discord.Bot):  # type: ignore[misc]
         the same recording.
         """
         grace = self.config.disconnect_grace
-        if grace <= 0:
+        ceiling = self.config.max_outage
+        if grace <= 0 and ceiling <= 0:
             return []
 
         now = time.perf_counter()
@@ -586,6 +611,27 @@ class StenosBot(discord.Bot):  # type: ignore[misc]
                 # Cleared rather than left. A connection that came back must
                 # not count the time it was away against the next outage.
                 session.disconnected_since = None
+                session.outage_since = None
+                continue
+
+            if session.outage_since is None:
+                session.outage_since = now
+            if ceiling > 0 and now - session.outage_since >= ceiling:
+                # Whatever py-cord is doing, it has had long enough. A host
+                # whose network never comes back would otherwise hold the
+                # recording open reporting a call that receives nothing.
+                lost.append(session)
+                continue
+
+            if self.reconnecting(session):
+                # An attempt is in flight, so the grace has nothing to measure
+                # yet. Cleared, so a recovery that fails and is retried gets
+                # the whole grace rather than the remainder of an earlier one.
+                if session.disconnected_since is not None:
+                    session.disconnected_since = None
+                continue
+
+            if grace <= 0:
                 continue
             if session.disconnected_since is None:
                 session.disconnected_since = now
@@ -601,23 +647,39 @@ class StenosBot(discord.Bot):  # type: ignore[misc]
             self.sessions.pop(session.guild_id, None)
         return lost
 
+    def outage_limit(self, session: RecordingSession) -> tuple[float, str]:
+        """The limit that ended this recording, and the setting that named it.
+
+        Read from the clocks rather than recorded when the decision was made,
+        because the caller runs in the same tick as ``stranded`` and the two
+        ceilings cannot both have just expired.
+        """
+        ceiling = self.config.max_outage
+        since = session.outage_since
+        if ceiling > 0 and since is not None and time.perf_counter() - since >= ceiling:
+            return ceiling, "MAX_OUTAGE"
+        return self.config.disconnect_grace, "DISCONNECT_GRACE"
+
     async def enforce_connection(self) -> None:
         """End any recording whose connection did not come back, and say why."""
         for session in await self.stranded():
+            limit, setting = self.outage_limit(session)
             log.warning(
-                "Voice connection to %s did not come back, stopping the recording.",
+                "Voice connection to %s did not come back within the %s limit, "
+                "stopping the recording.",
                 session.channel_name,
+                setting,
             )
             await self.finish_and_report(
                 session,
                 stopped=(
                     f"Recording stopped after {format_duration(session.elapsed())}: "
                     f"the voice connection to {session.channel_name} was lost and did "
-                    f"not come back within {self.config.disconnect_grace:g} seconds"
+                    f"not come back within {limit:g} seconds"
                 ),
                 closing=(
                     "Everything captured before the connection dropped was transcribed. "
-                    "Raise DISCONNECT_GRACE to wait longer for a recovery."
+                    f"Raise {setting} to wait longer for a recovery."
                 ),
             )
 

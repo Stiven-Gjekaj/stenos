@@ -814,3 +814,17 @@ def test_taking_the_skipped_count_clears_it() -> None:
     assert upstream.take_skipped_frames() == 7
     assert upstream.take_skipped_frames() == 0
     assert upstream.skipped_frames() == 0
+
+
+def test_pycord_still_names_the_states_a_reconnect_passes_through() -> None:
+    # The recovery wait reads this state machine to tell an attempt in flight
+    # from a connection that is gone. A py-cord that renames either endpoint
+    # makes every outage read as not recovering, which is safe but silently
+    # undoes the waiting, so it fails here instead.
+    from discord.voice.state import ConnectionFlowState
+
+    names = {member.name for member in ConnectionFlowState}
+
+    assert {"disconnected", "connected"} <= names
+    # And something in between, or there is no attempt to observe.
+    assert names - {"disconnected", "connected"}
