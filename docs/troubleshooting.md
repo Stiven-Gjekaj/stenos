@@ -23,6 +23,7 @@ maximum segment  30.0s
 buffer limit     1024MB
 disk limit       4096MB
 disconnect grace 60s
+max outage       900s
 output directory transcripts
 keep audio       False
 opus loaded      True

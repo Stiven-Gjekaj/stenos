@@ -1182,6 +1182,7 @@ def describe_environment(config: Config) -> str:
         f"buffer limit     {_limit(config.max_buffer_mb, 'MB')}",
         f"disk limit       {_limit(config.max_disk_mb, 'MB')}",
         f"disconnect grace {_limit(config.disconnect_grace, 's')}",
+        f"max outage       {_limit(config.max_outage, 's')}",
         f"output directory {output_state(config.output_dir)}",
         f"keep audio       {config.keep_audio}",
         f"opus loaded      {ensure_opus()}",

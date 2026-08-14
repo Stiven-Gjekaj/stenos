@@ -59,6 +59,14 @@ DEFAULT_MAX_DISK_MB = 4096.0
 #: reads as disconnected for the whole of that attempt, so this has to outlast
 #: a recovery: its connect timeout alone is 30 seconds. Zero waits forever.
 DEFAULT_DISCONNECT_GRACE = 60.0
+
+#: Longest a recording waits through an outage that py-cord is still trying to
+#: recover from, in seconds. The grace above answers a connection that is simply
+#: gone; this one bounds a reconnect that never succeeds, so an unattended host
+#: cannot sit believing it is recording a call that ended half an hour ago.
+#: Fifteen minutes comfortably outlasts a router restart. Zero removes it and
+#: waits for as long as py-cord keeps trying.
+DEFAULT_MAX_OUTAGE = 900.0
 DEFAULT_OUTPUT_DIR = Path("transcripts")
 
 _TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
@@ -84,6 +92,7 @@ class Config:
     max_buffer_mb: float = DEFAULT_MAX_BUFFER_MB
     max_disk_mb: float = DEFAULT_MAX_DISK_MB
     disconnect_grace: float = DEFAULT_DISCONNECT_GRACE
+    max_outage: float = DEFAULT_MAX_OUTAGE
     keep_audio: bool = False
     output_dir: Path = field(default=DEFAULT_OUTPUT_DIR)
 
@@ -328,6 +337,7 @@ def load_config(env: Mapping[str, str] | None = None, *, use_dotenv: bool = True
         disconnect_grace=_read_float(
             env, "DISCONNECT_GRACE", DEFAULT_DISCONNECT_GRACE, minimum=0.0
         ),
+        max_outage=_read_float(env, "MAX_OUTAGE", DEFAULT_MAX_OUTAGE, minimum=0.0),
         keep_audio=_read_bool(env, "KEEP_AUDIO", False),
         output_dir=_read_output_dir(env),
     )

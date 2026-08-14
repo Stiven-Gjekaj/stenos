@@ -184,6 +184,25 @@ nothing else ends one.
 
 ## Output
 
+### `MAX_OUTAGE`
+
+*Default: `900` seconds. `0` removes the limit.*
+
+Longest a recording waits through an outage that py-cord is still trying to
+recover from.
+
+The two limits answer different questions. `DISCONNECT_GRACE` answers a
+connection that is simply gone, and starts counting once py-cord has stopped
+trying. This one bounds a reconnect that never succeeds, and counts from the
+moment the connection went down.
+
+Without it a host whose network never comes back would hold a recording open
+for as long as py-cord kept retrying, reporting a call in progress that is
+receiving nothing. Fifteen minutes comfortably outlasts a router restart, which
+is the outage worth surviving.
+
+Set it to `0` to wait for as long as py-cord keeps trying.
+
 ### `OUTPUT_DIR`
 
 *Default: `transcripts`.*
