@@ -147,6 +147,14 @@ curl -fsSL https://raw.githubusercontent.com/Stiven-Gjekaj/stenos/main/scripts/i
 & ([scriptblock]::Create((irm https://raw.githubusercontent.com/Stiven-Gjekaj/stenos/main/scripts/install.ps1))) -Pre
 ```
 
+**Today, `--pre` is the one you want.** Only `0.2.0` was cut as a beta, and
+every release since has been an alpha within the maintenance line, so the
+stable install resolves to a build that predates several releases of fixes.
+That is by design rather than neglect: the versioning below gives the `0.2`
+line one stable slot, and the next is `0.3.0`, which waits for the graphical
+interface. Until then the default is the last build to be called stable, and
+`--pre` is the newest one.
+
 Pass a version instead of `--pre` to pin one exactly, and run `install.sh
 --help` for the full set of options.
 

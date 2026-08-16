@@ -8,6 +8,20 @@ of the [README](README.md). A release covers a whole series: every commit
 sharing an `X.N.V` belongs to it, and the tag is cut at the last of them. The
 sections below are therefore headed by the series rather than by one version.
 
+## 0.2.5
+
+### Fixed
+
+- **The quick start did not say the stable install was behind.** The scheme
+  gives the `0.2` line one stable slot and `0.2.0` took it, so every release
+  since has been an alpha and therefore a pre-release. `releases/latest` passes
+  over all of them, which means the first command in the quick start resolves
+  to a build from before the disk spilling, `--recover`, surviving a dropped
+  connection, and transcribing files. Nothing is broken and the versioning
+  section has always described the rule, but a reader copying that line had no
+  way to connect the two. It now says which command to use today and why the
+  other one lags, and that the next stable release is `0.3.0`.
+
 ## 0.2.4
 
 ### Added
