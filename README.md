@@ -9,7 +9,7 @@ _One timestamped, speaker-attributed transcript. No audio leaves the machine_
 <p align="center">
   <img src="https://img.shields.io/badge/Python-3.11%20to%203.13-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python 3.11 to 3.13"/>
   <img src="https://img.shields.io/badge/dependencies-4_direct-007ec6?style=for-the-badge" alt="Four direct runtime dependencies"/>
-  <img src="https://img.shields.io/badge/tests-734_passing-427819?style=for-the-badge" alt="734 tests passing"/>
+  <img src="https://img.shields.io/badge/tests-740_passing-427819?style=for-the-badge" alt="740 tests passing"/>
 </p>
 
 <p align="center">
@@ -187,6 +187,7 @@ cp .env.example .env      # then set DISCORD_TOKEN
 stenos --check            # report the resolved backend and whether opus loaded
 stenos --recover          # transcribe a recording a crash left unfinished
 stenos --transcribe *.wav # transcribe audio files, no Discord and no token
+stenos --interface        # open the window
 stenos                    # start the bot
 ```
 
@@ -425,9 +426,10 @@ becomes text, and text becomes one ordered transcript.
 | **Output** | transcript.py | 303 | Merges, orders, and writes the transcript and its sidecar portably |
 | **Output** | spill.py | 345 | Holds a recording that outgrew memory on disk, and reads back one a crash left behind |
 | **Interface** | interface.py | 231 | Derives what the graphical interface shows, with nothing drawn |
-| **Commands** | bot.py | 1625 | Slash commands, session state, the offline pipeline, and the CLI |
+| **Interface** | window.py | 182 | Draws it, and imports tkinter where nothing else has to |
+| **Commands** | bot.py | 1661 | Slash commands, session state, the offline pipeline, and the CLI |
 | **Configuration** | config.py | 343 | Validated environment parsing and platform-aware backend resolution |
-| **Total** | **13 files** | **5581** | Plus 8807 lines of tests |
+| **Total** | **14 files** | **5799** | Plus 8877 lines of tests |
 
 ```
 src/stenos/      the bot (sink, transport, audio, transcription, output, commands)

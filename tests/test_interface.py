@@ -8,11 +8,17 @@ it out.
 
 from __future__ import annotations
 
+import builtins
 import json
+import logging
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import pytest
+
+from stenos import bot as bot_module
+from stenos.config import Config
 from stenos.interface import Library, library, live_recordings
 from stenos.spill import SpillWriter
 
@@ -195,3 +201,67 @@ def test_no_recording_shows_no_rows() -> None:
     bot.sessions = {}
 
     assert live_recordings(bot) == []
+
+
+# The window itself. tkinter ships with Python on Windows and macOS, and on
+# Linux it is a separate package a distribution does not always install, so
+# these run where it is present and the absence is covered on any machine.
+
+
+def test_the_missing_toolkit_message_names_the_package_to_install() -> None:
+    # A traceback from a standard library import tells somebody nothing about
+    # what to do. This has to say what to install, on any machine, including
+    # the ones where tkinter is present and this path never runs.
+    assert "python3-tk" in bot_module.MISSING_TOOLKIT
+    assert "tkinter" in bot_module.MISSING_TOOLKIT
+
+
+def test_the_interface_reports_a_missing_toolkit_rather_than_crashing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Forced, so this is covered whether or not the machine running it has
+    # tkinter. Without the guard this is an ImportError out of main.
+    real_import = builtins.__import__
+
+    def refuse(name: str, *args: Any, **kwargs: Any) -> Any:
+        if name.endswith("window"):
+            raise ImportError("no tkinter")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", refuse)
+
+    with caplog.at_level(logging.ERROR, logger="stenos"):
+        code = bot_module.open_interface(Config(discord_token="x", output_dir=tmp_path))
+
+    assert code == 2
+    assert any("python3-tk" in message for message in caplog.messages)
+
+
+def test_the_settings_shown_cover_every_limit_that_ends_a_recording(tmp_path: Path) -> None:
+    # The commonest question about a recording is which setting decided
+    # something, so a window that omits one is worse than no window.
+    window = pytest.importorskip("stenos.window")
+
+    shown = dict(window._settings(Config(discord_token="x", output_dir=tmp_path)))
+
+    assert "Buffer limit" in shown
+    assert "Disk limit" in shown
+    assert "Disconnect grace" in shown
+    assert "Maximum outage" in shown
+    assert shown["Output directory"] == str(tmp_path)
+
+
+def test_a_limit_of_zero_is_shown_as_none(tmp_path: Path) -> None:
+    window = pytest.importorskip("stenos.window")
+
+    assert window._limit(0, "MB") == "none"
+    assert window._limit(1024, "MB") == "1024MB"
+
+
+def test_the_rows_a_window_draws_come_from_the_library(tmp_path: Path) -> None:
+    window = pytest.importorskip("stenos.window")
+    write_call(tmp_path, "call")
+
+    rows = window._library_rows(library(tmp_path))
+
+    assert rows == [("general, 2026-08-09 15:00", "1m 30s", "Alpha, Bravo")]

@@ -12,6 +12,22 @@ sections below are therefore headed by the series rather than by one version.
 
 ### Added
 
+- **There is a window.** `stenos --interface` opens it. It shows the
+  transcripts already written, the recordings a crash left unfinished, and the
+  settings in force, and it can transcribe the unfinished ones on a worker
+  thread rather than freezing while it does. It is read only otherwise:
+  starting and stopping a recording needs an asyncio loop running alongside the
+  one that draws the window, which is a piece of design in its own right.
+
+  **tkinter is not as universal as the design document claimed.** It is in the
+  standard library only where Python was built against Tk, and on Linux that is
+  routinely a separate distribution package. The window is therefore imported
+  where it is used rather than at the top of the package, so nothing else
+  depends on it, and `--interface` on a Python without it names the package to
+  install instead of raising an ImportError. Frozen builds are unaffected,
+  since they are made on runners that have it.
+
+
 - **The interface knows what it will show, before it draws anything.**
   `interface.py` derives the three screens as values: the recordings in
   progress, read from the sessions the bot holds rather than a summary written

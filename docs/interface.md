@@ -15,9 +15,19 @@ where it would hurt: PyInstaller has to be told about every toolkit's data
 files, and a toolkit that ships its own binaries makes the download larger on
 three platforms.
 
-Tkinter costs nothing to add. It is in the standard library, PyInstaller
-handles it without being told, and it runs on all three platforms the release
-already builds for.
+Tkinter adds no dependency to install. It is in the standard library,
+PyInstaller handles it without being told, and it runs on all three platforms
+the release already builds for.
+
+**It is not always present, which this document originally got wrong.** Tkinter
+is in the standard library only when Python was built against Tk, and on Linux
+that is routinely a separate distribution package rather than part of the
+interpreter. The machine this was written on has no Python with it. So the
+window is imported where it is used rather than at the top of the package,
+nothing else in the program depends on it, and `--interface` on a Python
+without it prints the package to install instead of an ImportError. The frozen
+builds are made on runners that have it, so a downloaded executable is
+unaffected.
 
 It looks dated, and building the transcript library will be more manual than it
 would be in a browser. That is the trade, taken knowingly.
@@ -121,6 +131,19 @@ The widgets become a rendering of values.
 A damaged sidecar is listed with less on it rather than refusing the library,
 and a `.partial` directory this version cannot read is still offered, because
 something is there and somebody should be told.
+
+## The window as it stands
+
+`window.py`, added in `0.2.5.5`, draws three tabs: the transcripts already
+written, the recordings a crash left unfinished, and the settings in force. It
+can transcribe the unfinished ones, on a worker thread, because transcription
+takes minutes and doing it on the drawing thread would freeze the window for
+the whole of it, which reads as a crash.
+
+It is read only otherwise. Starting and stopping a recording needs the bot
+running in the same process as the loop that draws this, and integrating an
+asyncio loop with a Tk mainloop is a piece of design in its own right rather
+than something to attempt alongside the first window.
 
 ## What this rules out
 

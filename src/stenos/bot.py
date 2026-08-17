@@ -89,6 +89,7 @@ __all__ = [
     "log_progress",
     "main",
     "output_state",
+    "recover",
     "register_commands",
     "run_pipeline",
     "save_audio",
@@ -1457,6 +1458,33 @@ def transcribe_files(paths: Sequence[Path], config: Config) -> RecordingResult:
     )
 
 
+#: Said when tkinter is not installed. Here rather than beside the widgets,
+#: because the module holding those imports tkinter and so cannot be imported
+#: to ask it, and here rather than in interface.py, which imports this module.
+MISSING_TOOLKIT = (
+    "The interface needs tkinter, which this Python was built without. It ships "
+    "with Python on Windows and macOS. On Linux it is a separate package: "
+    "apt install python3-tk, or the equivalent for your distribution."
+)
+
+
+def open_interface(config: Config) -> int:
+    """Open the window, or say why there is none to open.
+
+    The import is here rather than at the top of the module because it reaches
+    tkinter, which ships with Python on Windows and macOS and is routinely a
+    separate package on Linux. Absent, that is a sentence naming the package to
+    install rather than a traceback, and nothing else in the program is
+    affected by it.
+    """
+    try:
+        from .window import run as open_window
+    except ImportError:
+        log.error("%s", MISSING_TOOLKIT)
+        return 2
+    return open_window(config)
+
+
 def transcribe(paths: Sequence[Path], config: Config) -> int:
     """Transcribe files named on the command line, reporting what was written."""
     missing = [path for path in paths if not path.is_file()]
@@ -1536,6 +1564,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="report the resolved configuration and exit without connecting",
     )
     parser.add_argument(
+        "--interface",
+        action="store_true",
+        help="open the window instead of connecting to Discord",
+    )
+    parser.add_argument(
         "--transcribe",
         nargs="+",
         metavar="FILE",
@@ -1568,6 +1601,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.check:
         print(describe_environment(config))  # noqa: T201  the report is this command's output
         return 0
+
+    if args.interface:
+        return open_interface(config)
 
     if args.transcribe:
         return transcribe(args.transcribe, config)
