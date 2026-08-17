@@ -81,12 +81,16 @@ values and returns values, which is what makes it replaceable and testable:
 - `read_spill` and `partial_recordings` describe what is waiting to be
   recovered.
 
-One seam is still missing. Starting and stopping a recording lives inside the
-slash command handlers, mixed with answering a Discord interaction, so the
-interface cannot drive it without pretending to be a command. Extracting that
-into a control surface both the commands and the interface call is the next
-piece of work, and it is deliberately not part of this document: this settles
-what is being built, and that is an implementation step with its own issue.
+Starting a recording is one of them as of `0.2.5.1`. `begin_recording` joins a
+channel and starts it, `keep_recording` registers one that has been announced,
+and `abandon_recording` undoes one that could not be. The slash command
+validates an interaction and renders the answer; none of the work knows how it
+was asked for, which is what lets the interface drive the same path rather than
+imitating a command.
+
+Stopping is not extracted yet. It is entangled with answering the interaction
+that asked for it, and unlike starting it has three other callers already, so it
+wants doing carefully rather than quickly.
 
 ## What this rules out
 

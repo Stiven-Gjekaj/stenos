@@ -1692,3 +1692,90 @@ async def test_a_connection_that_never_dropped_says_nothing(tmp_path: Path) -> N
     await bot.enforce_connection()
 
     assert session.text_channel.sent == []
+
+
+# The control surface. Starting a recording used to live inside the slash
+# command, mixed with answering an interaction, so nothing else could drive it
+# without imitating a command. These tests are what that separation buys: a
+# recording begun with no interaction anywhere.
+
+
+async def test_a_recording_can_be_started_without_a_command(tmp_path: Path) -> None:
+    bot = make_bot(tmp_path)
+    channel = FakeVoiceChannel(2, "general", [])
+    channel.members = [FakeMember(11, "Alpha")]
+    text = FakeTextChannel()
+
+    session = await bot.begin_recording(channel, text_channel=text, guild=FakeGuild(1))
+
+    assert session.channel_name == "general"
+    assert channel.voice_client.recording is True
+    assert session.names == {11: "Alpha"}
+    # Returned rather than registered, because announcing is what gates it.
+    assert bot.sessions == {}
+
+
+async def test_a_started_recording_is_kept_once_it_has_been_announced(tmp_path: Path) -> None:
+    bot = make_bot(tmp_path)
+    channel = FakeVoiceChannel(2, "general", [])
+    session = await bot.begin_recording(channel, text_channel=FakeTextChannel(), guild=FakeGuild(1))
+
+    bot.keep_recording(session)
+
+    assert bot.sessions[1] is session
+
+
+async def test_a_recording_that_cannot_be_announced_is_abandoned(tmp_path: Path) -> None:
+    # Silent recording is never the intent, so one nobody was told about stops.
+    bot = make_bot(tmp_path)
+    channel = FakeVoiceChannel(2, "general", [])
+    session = await bot.begin_recording(channel, text_channel=FakeTextChannel(), guild=FakeGuild(1))
+
+    await bot.abandon_recording(session)
+
+    assert channel.voice_client.recording is False
+    assert channel.voice_client.disconnected is True
+    assert bot.sessions == {}
+
+
+async def test_starting_a_second_recording_in_a_guild_is_refused(tmp_path: Path) -> None:
+    bot = make_bot(tmp_path)
+    channel = FakeVoiceChannel(2, "general", [])
+    first = await bot.begin_recording(channel, text_channel=FakeTextChannel(), guild=FakeGuild(1))
+    bot.keep_recording(first)
+
+    with pytest.raises(bot_module.RecordingError, match="already in progress"):
+        await bot.begin_recording(channel, text_channel=FakeTextChannel(), guild=FakeGuild(1))
+
+
+async def test_a_channel_that_cannot_be_joined_leaves_nothing_behind(tmp_path: Path) -> None:
+    bot = make_bot(tmp_path)
+    channel = FakeVoiceChannel(2, "general", [])
+
+    async def refuse() -> Any:
+        raise RuntimeError("missing Connect permission")
+
+    channel.connect = refuse
+
+    with pytest.raises(bot_module.RecordingError, match="Could not join general"):
+        await bot.begin_recording(channel, text_channel=FakeTextChannel(), guild=FakeGuild(1))
+
+    assert bot.sessions == {}
+
+
+async def test_a_recording_that_will_not_start_disconnects_itself(tmp_path: Path) -> None:
+    # The failure carries a sentence for whoever asked, and leaves no voice
+    # connection sitting in a channel it is not recording.
+    bot = make_bot(tmp_path)
+    channel = FakeVoiceChannel(2, "general", [])
+
+    def refuse(sink: Any, callback: Any) -> None:
+        raise RuntimeError("receive is broken")
+
+    channel.voice_client.start_recording = refuse
+
+    with pytest.raises(bot_module.RecordingError, match="Could not start recording"):
+        await bot.begin_recording(channel, text_channel=FakeTextChannel(), guild=FakeGuild(1))
+
+    assert channel.voice_client.disconnected is True
+    assert bot.sessions == {}

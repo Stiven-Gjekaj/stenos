@@ -10,6 +10,25 @@ sections below are therefore headed by the series rather than by one version.
 
 ## 0.2.5
 
+### Changed
+
+- **Starting a recording no longer lives inside the slash command.** It was
+  mixed with answering a Discord interaction, so nothing else could begin a
+  recording without imitating a command, which is the seam the graphical
+  interface needs and the reason it could not be built yet.
+
+  `begin_recording` joins a channel and starts it, `keep_recording` registers
+  one that has been announced, and `abandon_recording` undoes one that could
+  not be. The order is the part worth keeping: announcing gates the recording
+  rather than accompanying it, so a session is registered only once the channel
+  has been told, and a recording nobody could be told about is stopped instead.
+  A failure carries a sentence for whoever asked rather than a stack trace,
+  because both callers report it.
+
+  No behaviour changes. The command does the same things in the same order and
+  every test that covered it still passes untouched, which is the evidence that
+  this was a move rather than a rewrite.
+
 ### Fixed
 
 - **The quick start did not say the stable install was behind.** The scheme

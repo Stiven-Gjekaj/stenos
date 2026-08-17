@@ -802,6 +802,103 @@ class StenosBot(discord.Bot):  # type: ignore[misc]
             return False
         return int(getattr(member, "id", 0)) == int(user.id)
 
+    async def begin_recording(
+        self,
+        channel: Any,
+        *,
+        text_channel: Any,
+        guild: Any = None,
+    ) -> RecordingSession:
+        """Join a voice channel and start recording it.
+
+        Everything a recording needs to begin, with nothing about how it was
+        asked for. The slash command validates an interaction and renders the
+        answer; this does the work, so an interface that has no interaction to
+        validate can drive the same path rather than imitating a command.
+
+        The session is returned rather than registered. A recording is not
+        announced yet at this point, and announcing is what gates it: one that
+        cannot say it has started does not start. ``keep_recording`` registers
+        it once that has happened, and ``abandon_recording`` undoes this.
+
+        Raises ``RecordingError`` with a sentence for whoever asked, having
+        already disconnected, so a failure leaves nothing behind.
+        """
+        guild_id = int(getattr(guild, "id", 0) or 0)
+        if guild_id and guild_id in self.sessions:
+            raise RecordingError("A recording is already in progress.")
+
+        try:
+            voice_client = await channel.connect()
+        except Exception as error:
+            log.exception("Could not join %s", channel.name)
+            raise RecordingError(
+                f"Could not join {channel.name}: {error.__class__.__name__}: {error}. "
+                f"Check that the bot has the Connect permission for that channel."
+            ) from error
+
+        started_at = datetime.now(UTC)
+        channel_name = str(channel.name)
+        sink = TimestampedSink(
+            segment_gap=self.config.segment_gap,
+            max_segment=self.config.max_segment,
+            storage=open_storage(self.config, channel_name, started_at),
+            spill_above=int(self.config.max_buffer_mb * 1_000_000),
+        )
+        session = RecordingSession(
+            guild_id=guild_id,
+            channel_id=int(channel.id),
+            channel_name=channel_name,
+            text_channel=text_channel,
+            voice_client=voice_client,
+            sink=sink,
+            guild=guild,
+            started_at=started_at,
+        )
+        session.remember_all(getattr(channel, "members", []))
+
+        # py-cord 2.8 never tells a sink which client it belongs to. The line
+        # that did is commented out in its reader, and the opus decoder asserts
+        # on it while handling the first packet, so the router thread dies with
+        # the audio already decrypted and one step from being buffered.
+        sink.init(voice_client)
+
+        # One malformed frame would otherwise stop the router thread and
+        # with it the recording, discarding everything that follows.
+        tolerate_undecodable_frames()
+
+        try:
+            voice_client.start_recording(sink, _on_recording_finished)
+        except Exception as error:
+            log.exception("Could not start recording")
+            with contextlib.suppress(Exception):
+                await voice_client.disconnect()
+            raise RecordingError(
+                f"Could not start recording: {error.__class__.__name__}: {error}. "
+                f"Voice reception is currently broken in {receive_support().version}, "
+                f"tracked at {PYCORD_RECEIVE_ISSUE}."
+            ) from error
+
+        return session
+
+    def keep_recording(self, session: RecordingSession) -> None:
+        """Register a recording that has been announced, so it can be stopped."""
+        self.sessions[session.guild_id] = session
+
+    async def abandon_recording(self, session: RecordingSession) -> None:
+        """Undo a recording that began and must not continue.
+
+        Used where announcing it failed, which is the one case that starts a
+        recording and then must not have one: silent recording is never the
+        intent, so a recording nobody was told about is stopped rather than
+        kept.
+        """
+        with contextlib.suppress(Exception):
+            session.voice_client.stop_recording()
+        session.sink.cleanup()
+        with contextlib.suppress(Exception):
+            await session.voice_client.disconnect()
+
     async def on_voice_state_update(self, member: Any, before: Any, after: Any) -> None:
         """Track a recorded channel's membership, and notice the bot leaving it."""
         session = self.sessions.get(getattr(member.guild, "id", 0))
@@ -1004,77 +1101,19 @@ def register_commands(bot: StenosBot, guild_ids: list[int] | None = None) -> Any
         # caller is told the application did not respond.
         await ctx.defer()
 
-        # Guarded for the same reason the recording below is. Joining voice is
-        # the step most likely to fail outright: it times out after thirty
-        # seconds, and it refuses outright without the Connect permission.
-        # Raising here answers nothing, and the deferred reply the line above
-        # sent stays a spinner until Discord gives up on it.
         try:
-            voice_client = await channel.connect()
-        except Exception as error:
-            log.exception("Could not join %s", channel.name)
-            await _reply(
-                ctx.followup,
-                f"Could not join {channel.name}: {error.__class__.__name__}: {error}. "
-                f"Check that the bot has the Connect permission for that channel.",
-                None,
+            session = await bot.begin_recording(
+                channel,
+                text_channel=ctx.channel,
+                guild=getattr(ctx, "guild", None),
             )
-            return
-
-        started_at = datetime.now(UTC)
-        channel_name = str(channel.name)
-        sink = TimestampedSink(
-            segment_gap=bot.config.segment_gap,
-            max_segment=bot.config.max_segment,
-            storage=open_storage(bot.config, channel_name, started_at),
-            spill_above=int(bot.config.max_buffer_mb * 1_000_000),
-        )
-        session = RecordingSession(
-            guild_id=int(guild_id),
-            channel_id=int(channel.id),
-            channel_name=channel_name,
-            text_channel=ctx.channel,
-            voice_client=voice_client,
-            sink=sink,
-            guild=getattr(ctx, "guild", None),
-            started_at=started_at,
-        )
-        session.remember_all(getattr(channel, "members", []))
-
-        # Reported rather than raised, and registered only once recording has
-        # actually begun. A failure here used to leave the command unanswered
-        # and a session behind, so the bot went on describing a recording that
-        # had never started.
-        # py-cord 2.8 never tells a sink which client it belongs to. The line
-        # that did is commented out in its reader, and the opus decoder asserts
-        # on it while handling the first packet, so the router thread dies with
-        # the audio already decrypted and one step from being buffered.
-        sink.init(voice_client)
-
-        # One malformed frame would otherwise stop the router thread and
-        # with it the recording, discarding everything that follows.
-        tolerate_undecodable_frames()
-
-        try:
-            voice_client.start_recording(sink, _on_recording_finished)
-        except Exception as error:
-            log.exception("Could not start recording")
-            with contextlib.suppress(Exception):
-                await voice_client.disconnect()
-            await _reply(
-                ctx.followup,
-                f"Could not start recording: {error.__class__.__name__}: {error}. "
-                f"Voice reception is currently broken in {receive_support().version}, "
-                f"tracked at {PYCORD_RECEIVE_ISSUE}.",
-                None,
-            )
+        except RecordingError as refused:
+            await _reply(ctx.followup, str(refused), None)
             return
 
         # Announced unconditionally and non-ephemerally. Recording law varies
         # by jurisdiction and silent recording is never the intent, so a
-        # recording that cannot say it has started does not start: the session
-        # was registered before this and the failure escaped, which left one
-        # running that nobody had been told about.
+        # recording that cannot say it has started does not start.
         announced = await _reply(
             ctx.followup,
             f"Recording {channel.name}. Every participant is recorded separately "
@@ -1085,14 +1124,10 @@ def register_commands(bot: StenosBot, guild_ids: list[int] | None = None) -> Any
             log.warning(
                 "Could not announce the recording in %s, so it was not started.", channel.name
             )
-            with contextlib.suppress(Exception):
-                voice_client.stop_recording()
-            sink.cleanup()
-            with contextlib.suppress(Exception):
-                await voice_client.disconnect()
+            await bot.abandon_recording(session)
             return
 
-        bot.sessions[session.guild_id] = session
+        bot.keep_recording(session)
 
     @group.command(name="stop", description="Stop recording and post the transcript")
     async def record_stop(ctx: discord.ApplicationContext) -> None:
@@ -1210,6 +1245,15 @@ def _repaired(applied: bool) -> str:
 def _limit(value: float, unit: str) -> str:
     """A ceiling that zero switches off, rendered so the report says which."""
     return f"{value:g}{unit}" if value > 0 else "none"
+
+
+class RecordingError(RuntimeError):
+    """A recording could not be started, with a sentence saying why.
+
+    Carries what to tell whoever asked rather than a stack trace, because both
+    callers report it: a slash command answers an interaction with it and the
+    interface will put it on screen.
+    """
 
 
 def open_storage(config: Config, channel_name: str, started_at: datetime) -> SpillWriter | None:
