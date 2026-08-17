@@ -10,6 +10,21 @@ sections below are therefore headed by the series rather than by one version.
 
 ## 0.2.5
 
+### Added
+
+- **The interface knows what it will show, before it draws anything.**
+  `interface.py` derives the three screens as values: the recordings in
+  progress, read from the sessions the bot holds rather than a summary written
+  for the screen, and the library of finished calls read from `OUTPUT_DIR`
+  together with the `.partial` directories a crash left behind.
+
+  That split is what makes the decisions testable without a display. A
+  transcript whose sidecar is damaged is listed with less on it rather than
+  refusing the whole library, a `.partial` directory this version cannot read
+  is still offered because something is there and somebody should be told, and
+  a recording whose connection is down reads differently from one that is up,
+  which matters now that a recording continues through an outage.
+
 ### Changed
 
 - **Starting a recording no longer lives inside the slash command.** It was

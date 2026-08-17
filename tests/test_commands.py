@@ -1869,3 +1869,22 @@ async def test_a_recording_with_nothing_in_it_has_no_result_to_hand_back(
     message, _attachment, result = finished
     assert "No audio was received" in message
     assert result is None
+
+
+async def test_the_live_view_reads_a_real_recording(tmp_path: Path) -> None:
+    # tests/test_interface.py drives this with stand-ins. A stand-in that
+    # drifts from the real session would make every one of those tests agree
+    # with itself and with nothing else, so this one uses the real thing.
+    from stenos.interface import live_recordings
+
+    bot, _channel, session = await recording_with_self(tmp_path)
+    feed(session)
+
+    live = live_recordings(bot)
+
+    assert len(live) == 1
+    assert live[0].channel == "general"
+    assert live[0].guild_id == session.guild_id
+    assert live[0].speakers == 1
+    assert live[0].held_bytes > 0
+    assert live[0].connected is True

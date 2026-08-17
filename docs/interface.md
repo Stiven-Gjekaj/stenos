@@ -103,6 +103,25 @@ the transcript path and the speaker list, so `finish_recording` should
 eventually return the `RecordingResult` alongside the rendering. That is a
 small change and it is not made yet.
 
+## What it is built out of
+
+`interface.py`, added in `0.2.5.4`, works out what the screens show without
+drawing any of it: the recordings in progress, read from the sessions the bot
+holds rather than from a summary written for the screen, so the interface
+cannot show one the bot does not have; and the library, read from `OUTPUT_DIR`
+the way a person reads that folder, including the `.partial` directories a
+crash left behind.
+
+Splitting it this way is what makes the decisions testable. Which recordings
+exist, what a finished one says about itself, what happens to a transcript
+whose sidecar is damaged, and whether a connection that is down looks different
+from one that is up, are all answered here and none of them needs a display.
+The widgets become a rendering of values.
+
+A damaged sidecar is listed with less on it rather than refusing the library,
+and a `.partial` directory this version cannot read is still offered, because
+something is there and somebody should be told.
+
 ## What this rules out
 
 - Anything listening on a port, including on loopback.
