@@ -9,7 +9,7 @@ _One timestamped, speaker-attributed transcript. No audio leaves the machine_
 <p align="center">
   <img src="https://img.shields.io/badge/Python-3.11%20to%203.13-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python 3.11 to 3.13"/>
   <img src="https://img.shields.io/badge/dependencies-4_direct-007ec6?style=for-the-badge" alt="Four direct runtime dependencies"/>
-  <img src="https://img.shields.io/badge/tests-719_passing-427819?style=for-the-badge" alt="719 tests passing"/>
+  <img src="https://img.shields.io/badge/tests-720_passing-427819?style=for-the-badge" alt="720 tests passing"/>
 </p>
 
 <p align="center">
@@ -424,9 +424,9 @@ becomes text, and text becomes one ordered transcript.
 | **Transcription** | transcribe.py | 444 | Backend protocol, mlx and faster-whisper implementations, and the segment loop |
 | **Output** | transcript.py | 303 | Merges, orders, and writes the transcript and its sidecar portably |
 | **Output** | spill.py | 345 | Holds a recording that outgrew memory on disk, and reads back one a crash left behind |
-| **Commands** | bot.py | 1611 | Slash commands, session state, the offline pipeline, and the CLI |
+| **Commands** | bot.py | 1625 | Slash commands, session state, the offline pipeline, and the CLI |
 | **Configuration** | config.py | 343 | Validated environment parsing and platform-aware backend resolution |
-| **Total** | **12 files** | **5336** | Plus 8570 lines of tests |
+| **Total** | **12 files** | **5350** | Plus 8591 lines of tests |
 
 ```
 src/stenos/      the bot (sink, transport, audio, transcription, output, commands)

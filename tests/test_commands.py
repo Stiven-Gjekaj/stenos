@@ -1791,10 +1791,15 @@ async def test_a_recording_can_be_stopped_without_a_command(
     finished = await bot.end_recording(1)
 
     assert finished is not None
-    message, _attachment = finished
+    message, _attachment, result = finished
     assert "Transcribed" in message
     assert bot.sessions == {}
-    assert list(tmp_path.glob("*.txt"))
+    # The result travels beside the rendering, so a caller that wants the file
+    # rather than a sentence written for Discord has it without transcribing
+    # the call a second time.
+    assert result is not None
+    assert result.transcript_path.is_file()
+    assert result.transcript_path == next(iter(tmp_path.glob("*.txt")))
 
 
 async def test_stopping_nothing_says_nothing_rather_than_guessing(tmp_path: Path) -> None:
@@ -1848,3 +1853,19 @@ async def test_a_stop_racing_another_way_of_ending_says_so_once(
     assert ctx.followup.sent[0][0] == "The recording had already stopped."
     # One report of the call, not two.
     assert session.text_channel.sent == []
+
+
+async def test_a_recording_with_nothing_in_it_has_no_result_to_hand_back(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # There is no transcript, so there is nothing to point at. None rather than
+    # a result describing a file that was never written.
+    monkeypatch.setattr(bot_module, "load_backend", lambda *a, **k: MockBackend())
+    bot, _channel, _session = await recording_with_self(tmp_path)
+
+    finished = await bot.end_recording(1)
+
+    assert finished is not None
+    message, _attachment, result = finished
+    assert "No audio was received" in message
+    assert result is None

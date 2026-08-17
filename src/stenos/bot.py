@@ -715,7 +715,7 @@ class StenosBot(discord.Bot):  # type: ignore[misc]
                 ),
             )
 
-    async def end_recording(self, guild_id: int) -> tuple[str, Any] | None:
+    async def end_recording(self, guild_id: int) -> tuple[str, Any, RecordingResult | None] | None:
         """Stop the recording in a guild and produce what came of it.
 
         Returns None when there is nothing recording, so a caller can say so in
@@ -728,8 +728,9 @@ class StenosBot(discord.Bot):  # type: ignore[misc]
         The rendering is inherited rather than chosen: ``finish_recording``
         already produced a message and an attachment for every other way a
         recording ends, and it knows nothing about interactions, which is why
-        there is so little here. An interface wanting the paths rather than a
-        sentence should be given the result object, which is a further step.
+        there is so little here. The result travels beside them, so a caller
+        that wants the transcript path rather than a sentence written for
+        Discord has it without running the pipeline again.
         """
         session = self.sessions.pop(guild_id, None)
         if session is None:
@@ -750,7 +751,7 @@ class StenosBot(discord.Bot):  # type: ignore[misc]
         Sending is guarded: that channel may be gone by now, and failing to
         announce a transcript must not discard one already written to disk.
         """
-        message, attachment = await finish_recording(
+        message, attachment, _result = await finish_recording(
             self, session, stopped=stopped, closing=closing
         )
         await _reply(session.text_channel, message, attachment)
@@ -986,17 +987,22 @@ async def finish_recording(
     *,
     stopped: str = "Recording stopped",
     closing: str = "",
-) -> tuple[str, Any]:
+) -> tuple[str, Any, RecordingResult | None]:
     """Stop, transcribe, and write out one recording, whoever asked for it.
 
     Shared by the stop command and the buffer ceiling, so a recording that ends
     itself produces the same transcript and the same message as one that was
     asked to stop, rather than a second implementation that drifts from this.
 
-    Returns what to say and what to attach, if anything. Nothing here raises: a
-    caller is usually answering a deferred command, and an exception escaping
-    would leave it answering forever, which is indistinguishable from a
-    transcription that is merely slow.
+    Returns what to say, what to attach if anything, and the result itself.
+    The result is None wherever there is not one: a recording that captured
+    nothing, a backend that would not load, a transcription that failed. Every
+    caller so far wanted only the first two, but a sentence written for Discord
+    is no use to anything else, and the paths and speakers are only here.
+
+    Nothing here raises: a caller is usually answering a deferred command, and
+    an exception escaping would leave it answering forever, which is
+    indistinguishable from a transcription that is merely slow.
     """
     try:
         session.voice_client.stop_recording()
@@ -1019,7 +1025,7 @@ async def finish_recording(
             integrity.reason,
             dave.summary,
         )
-        return f"{stopped}. {integrity.detail}", None
+        return f"{stopped}. {integrity.detail}", None, None
 
     try:
         backend = await asyncio.to_thread(
@@ -1043,12 +1049,20 @@ async def finish_recording(
     except BackendUnavailableError as error:
         log.error("Transcription backend unavailable: %s", error)
         return (
-            f"{stopped}, but the transcription backend is unavailable, "
-            f"so the audio could not be transcribed. {error}"
-        ), None
+            (
+                f"{stopped}, but the transcription backend is unavailable, "
+                f"so the audio could not be transcribed. {error}"
+            ),
+            None,
+            None,
+        )
     except Exception as error:
         log.exception("Transcription failed")
-        return (f"{stopped}, but transcription failed: {error.__class__.__name__}: {error}"), None
+        return (
+            (f"{stopped}, but transcription failed: {error.__class__.__name__}: {error}"),
+            None,
+            None,
+        )
 
     # Recorded before anything is sent. Both ways of announcing a recording can
     # fail, an interaction that expired and a channel the bot can no longer
@@ -1088,7 +1102,7 @@ async def finish_recording(
     if closing:
         message += f" {closing}"
 
-    return message, _attachment_for(result, session.guild)
+    return message, _attachment_for(result, session.guild), result
 
 
 def register_commands(bot: StenosBot, guild_ids: list[int] | None = None) -> Any:
@@ -1166,7 +1180,7 @@ def register_commands(bot: StenosBot, guild_ids: list[int] | None = None) -> Any
             # its own message, so saying anything more would be a second one.
             await _reply(ctx.followup, "The recording had already stopped.", None)
             return
-        message, attachment = finished
+        message, attachment, _result = finished
 
         if not await _reply(ctx.followup, message, attachment):
             # A deferred interaction is good for fifteen minutes. An hour of
