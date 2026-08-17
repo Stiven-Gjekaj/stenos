@@ -29,6 +29,15 @@ sections below are therefore headed by the series rather than by one version.
   every test that covered it still passes untouched, which is the evidence that
   this was a move rather than a rewrite.
 
+  Stopping followed, and was nearly free: `finish_recording` had been a module
+  level function knowing nothing about interactions since the buffer ceiling
+  and the lost connection needed it. `end_recording` deregisters a session
+  before transcribing it, so a second stop cannot transcribe the same call
+  twice, and returns nothing at all when there is nothing recording rather than
+  a sentence written for Discord. A stop command that loses that race to one of
+  the other three ways a recording ends now says so, instead of reporting a
+  call that has already been reported.
+
 ### Fixed
 
 - **The quick start did not say the stable install was behind.** The scheme

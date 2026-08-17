@@ -1779,3 +1779,72 @@ async def test_a_recording_that_will_not_start_disconnects_itself(tmp_path: Path
 
     assert channel.voice_client.disconnected is True
     assert bot.sessions == {}
+
+
+async def test_a_recording_can_be_stopped_without_a_command(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(bot_module, "load_backend", lambda *a, **k: MockBackend(texts=["a line"]))
+    bot, _channel, session = await recording_with_self(tmp_path)
+    feed(session)
+
+    finished = await bot.end_recording(1)
+
+    assert finished is not None
+    message, _attachment = finished
+    assert "Transcribed" in message
+    assert bot.sessions == {}
+    assert list(tmp_path.glob("*.txt"))
+
+
+async def test_stopping_nothing_says_nothing_rather_than_guessing(tmp_path: Path) -> None:
+    # None rather than a sentence, so a caller says so in its own words instead
+    # of being handed one written for Discord.
+    bot = make_bot(tmp_path)
+
+    assert await bot.end_recording(1) is None
+
+
+async def test_a_recording_is_deregistered_before_it_is_transcribed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Transcription takes minutes. A second stop arriving during it must not
+    # find the session still registered and transcribe the same call twice.
+    seen: list[dict[int, Any]] = []
+
+    def watch(*args: Any, **kwargs: Any) -> Any:
+        seen.append(dict(bot.sessions))
+        return MockBackend(texts=["a line"])
+
+    monkeypatch.setattr(bot_module, "load_backend", watch)
+    bot, _channel, session = await recording_with_self(tmp_path)
+    feed(session)
+
+    await bot.end_recording(1)
+
+    assert seen == [{}]
+
+
+async def test_a_stop_racing_another_way_of_ending_says_so_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The buffer ceiling, a lost connection and a shutdown all end a recording
+    # too, and each posts its own message. A stop command that lost the race
+    # must not post a second report of the same call.
+    monkeypatch.setattr(bot_module, "load_backend", lambda *a, **k: MockBackend(texts=["a line"]))
+    bot, _channel, session = await recording_with_self(tmp_path)
+    feed(session)
+    ctx = FakeContext(1, FakeMember(11, "Alpha"))
+
+    # The window is the deferral: the command has seen a recording and has not
+    # taken it yet, and deferring is an await that lets anything else run.
+    async def defer_and_lose_the_race(ephemeral: bool = False) -> None:
+        bot.sessions.pop(1, None)
+
+    ctx.defer = defer_and_lose_the_race
+
+    await command(bot, "stop")(ctx)
+
+    assert ctx.followup.sent[0][0] == "The recording had already stopped."
+    # One report of the call, not two.
+    assert session.text_channel.sent == []

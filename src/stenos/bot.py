@@ -715,6 +715,27 @@ class StenosBot(discord.Bot):  # type: ignore[misc]
                 ),
             )
 
+    async def end_recording(self, guild_id: int) -> tuple[str, Any] | None:
+        """Stop the recording in a guild and produce what came of it.
+
+        Returns None when there is nothing recording, so a caller can say so in
+        its own words rather than being handed a sentence written for Discord.
+
+        Deregistered before it is finished, not after. Transcription takes
+        minutes, and a second stop arriving during it would otherwise find the
+        session still registered and transcribe the same call twice.
+
+        The rendering is inherited rather than chosen: ``finish_recording``
+        already produced a message and an attachment for every other way a
+        recording ends, and it knows nothing about interactions, which is why
+        there is so little here. An interface wanting the paths rather than a
+        sentence should be given the result object, which is a further step.
+        """
+        session = self.sessions.pop(guild_id, None)
+        if session is None:
+            return None
+        return await finish_recording(self, session)
+
     async def finish_and_report(
         self,
         session: RecordingSession,
@@ -1131,13 +1152,21 @@ def register_commands(bot: StenosBot, guild_ids: list[int] | None = None) -> Any
 
     @group.command(name="stop", description="Stop recording and post the transcript")
     async def record_stop(ctx: discord.ApplicationContext) -> None:
-        session = bot.sessions.pop(getattr(ctx, "guild_id", 0), None)
+        guild_id = getattr(ctx, "guild_id", 0)
+        session = bot.sessions.get(guild_id)
         if session is None:
             await ctx.respond("No recording is in progress.", ephemeral=True)
             return
 
         await ctx.defer()
-        message, attachment = await finish_recording(bot, session)
+        finished = await bot.end_recording(guild_id)
+        if finished is None:
+            # Stopped by something else between the check above and here: the
+            # buffer ceiling, a lost connection, or a shutdown. That path posts
+            # its own message, so saying anything more would be a second one.
+            await _reply(ctx.followup, "The recording had already stopped.", None)
+            return
+        message, attachment = finished
 
         if not await _reply(ctx.followup, message, attachment):
             # A deferred interaction is good for fifteen minutes. An hour of

@@ -88,9 +88,20 @@ validates an interaction and renders the answer; none of the work knows how it
 was asked for, which is what lets the interface drive the same path rather than
 imitating a command.
 
-Stopping is not extracted yet. It is entangled with answering the interaction
-that asked for it, and unlike starting it has three other callers already, so it
-wants doing carefully rather than quickly.
+Stopping followed in `0.2.5.2`, and turned out to be nearly free.
+`finish_recording` was already a module level function returning a message and
+an attachment, knowing nothing about interactions, because the buffer ceiling,
+a lost connection and a shutdown all needed it before the interface did.
+`end_recording` takes a guild identifier, deregisters the session before
+transcribing it so a second stop cannot transcribe the same call twice, and
+returns None when there is nothing recording rather than a sentence written for
+Discord.
+
+One thing it still inherits: it hands back a rendered message and a
+`discord.File`, which is what every existing caller wanted. An interface wants
+the transcript path and the speaker list, so `finish_recording` should
+eventually return the `RecordingResult` alongside the rendering. That is a
+small change and it is not made yet.
 
 ## What this rules out
 
